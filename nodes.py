@@ -162,10 +162,12 @@ class bEpicSendToViewer:
 # mapping dictionaries for external use (nodes.py imports these)
 
 NODE_CLASS_MAPPINGS = {
+    "bEpicViewer": bEpicViewer,
     "bEpicSendToViewer": bEpicSendToViewer,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "bEpicViewer": "bEpic Image Viewer",
     "bEpicSendToViewer": "bEpic Send To Image Viewer",
 }
 
