@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(wc -l /d/AI/comfyui/custom_nodes/ComfyUI-ImageViewer/js/*.js)"
-    ]
-  }
-}
