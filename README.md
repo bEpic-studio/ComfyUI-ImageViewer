@@ -1,33 +1,33 @@
 # ComfyUI Image Viewer — bEpic Viewer
 
-An advanced image viewer panel for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with inspection tools, playback controls, image comparison, and more.
+An advanced image viewer panel for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with inspection tools, playback controls, image comparison, and it's own parameters panel.
 
 ---
 
 ![image viewer](docs/screenshots/screenshot_01.png)
 
-## Features
+## Core Features
 
-- Send any image to the viewer using the **bEpic Send To Image Viewer** node
-- View images from multiple nodes simultaneously in separate tabs
+- send any image or mask to the viewer using the **bEpic Send To Image Viewer** node
+- view images from multiple nodes simultaneously in separate tabs
 
-- support Zoom / Pan 
+- supports Zoom / Pan 
 
 - allows undocking into a separate browser window or tab (for two-monitor setups)
 
-- Each tab maintains a history of up to 20 snapshots automatically
-- Select a sub-range on the timeline to loop only part of a sequence
+- each tab maintains a history of up to 20 snapshots automatically
+- play image sequences as animations with configurable FPS
+- select a sub-range on the timeline to loop only part of a sequence
 
-- Split-screen comparison mode with a draggable divider
-- Shift-click two tabs or two history items to compare them
+- split-screen comparison mode with a draggable divider
+- shift-click two tabs or two history items to compare them
 
-- Real-time exposure adjustment (-4 EV to +4 EV) for inspecting dark or bright areas
-- Isolate individual color channels: **Red**, **Green**, or **Blue**
+- real-time exposure adjustment (-4 EV to +4 EV) for inspecting dark or bright areas
+- isolate individual color channels: **Red**, **Green**, or **Blue**
 
-- Includes a parameters panel: displays the parameters of the currently selected node in the ComfyUI graph
-- Lock the panel to a specific node to keep its parameters visible while working elsewhere
-
-- Save and reload named panel layouts
+- includes a parameters panel: displays the parameters of the currently selected node in the ComfyUI graph
+- lock the panel to a specific node to keep its parameters visible while working elsewhere
+- allows you to change parameters on all selected nodes
 
 ---
 
