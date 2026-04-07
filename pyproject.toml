@@ -1,5 +1,5 @@
 [project]
-name = "bEpic_ImageViewer"
+name = "ComfyUI-ImageViewer"
 description = "The bEpic image viewer by sebastianzilius is A professional floating image viewer for ComfyUI — multi-tab, history snapshots, side-by-side comparison, playback timeline, exposure/channel controls, and a live parameter panel."
 authors = [ "Sebastian Zilius"]  
 
