@@ -4,6 +4,8 @@ An advanced image viewer panel for [ComfyUI](https://github.com/comfyanonymous/C
 
 ---
 
+![alt text](docs/screenshot_03.png)
+
 ## Features
 
 ### Multi-Tab Display
@@ -81,20 +83,6 @@ An advanced image viewer panel for [ComfyUI](https://github.com/comfyanonymous/C
 ---
 
 ## Nodes
-
-### bEpic Image Viewer
-**Category:** `image/bEpic`
-
-A terminal (output) node that displays images inside the viewer panel.
-
-| Input | Type | Description |
-|-------|------|-------------|
-| `viewer_control` | BOOLEAN | Enable or disable the viewer output |
-| `images_1` … `images_N` | IMAGE | One or more image batches to display, each in its own tab |
-
-Connect any number of image outputs to this node. Each input appears as a separate tab in the viewer.
-
----
 
 ### bEpic Send To Image Viewer
 **Category:** `image/bEpic`

@@ -12,58 +12,6 @@ except Exception:
     IO = None
 
 
-class bEpicViewer:
-    def __init__(self):
-        self.output_dir = folder_paths.get_temp_directory()
-        self.type = "temp"
-
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "viewer_control": ("BOOLEAN", {"default": True}),
-            },
-            "optional": {
-                "images_1": ("IMAGE",),
-            },
-            "hidden": {"unique_id": "UNIQUE_ID"},
-        }
-
-    RETURN_TYPES = ()
-    FUNCTION = "view"
-    OUTPUT_NODE = True
-    CATEGORY = "image/bEpic"
-
-    def view(self, viewer_control=True, unique_id=None, **kwargs):
-        if not viewer_control:
-            return ()
-
-        def process_batch(images, input_num):
-            if images is None: 
-                return []
-            batch_results = []
-            for i, tensor in enumerate(images):
-                array = 255. * tensor.cpu().numpy()
-                img = Image.fromarray(np.clip(array, 0, 255).astype(np.uint8))
-                filename = f"bEpic_V_{unique_id}_tab{input_num}_{i:04d}_{random.randint(1, 1000)}.png"
-                img.save(os.path.join(self.output_dir, filename), compress_level=4)
-                batch_results.append({"filename": filename, "subfolder": "", "type": self.type})
-            return batch_results
-
-        data_payload = {"tabs": {}}
-        # Capture all dynamic inputs (images_1, images_2, etc.)
-        for key, value in kwargs.items():
-            if key.startswith("images_") and value is not None:
-                tab_index = key.split("_")[-1]
-                data_payload["tabs"][f"tab{tab_index}"] = process_batch(value, tab_index)
-
-        PromptServer.instance.send_sync("bepic.viewer.update", {
-            "tabs": data_payload["tabs"],
-            "unique_id": unique_id 
-        })
-        return ()
-
-
 class bEpicSendToViewer:
     def __init__(self):
         self.output_dir = folder_paths.get_temp_directory()
