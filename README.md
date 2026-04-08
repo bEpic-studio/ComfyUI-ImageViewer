@@ -68,7 +68,7 @@ After installation a **"Toggle bEpic Image Viewer"** button appears in the Comfy
 
 ## License, contributing
 
-Copyright © 2024 bEpic GmbH / Sebastian Zilius
+Copyright © 2026 bEpic GmbH / Sebastian Zilius
 
 **Free for personal and non-commercial use.**
 
