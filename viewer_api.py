@@ -6,6 +6,25 @@ import folder_paths
 from server import PromptServer
 
 try:
+    from . import media_resolve
+except Exception:  # pragma: no cover - viewer still works without the resolver
+    media_resolve = None
+
+
+def _file_response(path):
+    """Serve an image/video file, swapping in a browser-renderable PNG proxy for
+    formats an <img> can't decode (exr / tiff / dpx / ...)."""
+    if media_resolve is not None:
+        try:
+            proxy = media_resolve.proxy_for_display(path)
+            if proxy:
+                path = proxy
+        except Exception as e:
+            print(f"[bEpicViewer] display proxy failed for {path}: {e}")
+    from aiohttp import web
+    return web.FileResponse(path)
+
+try:
     from aiohttp import web
 
     def register_routes():
@@ -122,7 +141,7 @@ try:
                 print(f"[bEpicRawView] file not found: {cand}")
                 return web.Response(status=404, text="file not found")
 
-            return web.FileResponse(cand)
+            return _file_response(cand)
 
         async def _bepic_pick_folder(request):
             """Open a server-side folder picker dialog and return a sorted list of image files."""
@@ -168,7 +187,7 @@ try:
             path = os.path.abspath(path)
             if not os.path.isfile(path):
                 return web.Response(status=404, text="file not found")
-            return web.FileResponse(path)
+            return _file_response(path)
 
         async def _bepic_clear_cache(request):
             try:
@@ -254,6 +273,54 @@ try:
                 "path": os.path.abspath(fpath),
             })
 
+        async def _bepic_resolve_media(request):
+            """Resolve a loader node's media widget value into viewer tabs.
+
+            Body/query: { value, hint, type, skip, cap, every } where `value` is
+            the raw widget string (a ./input filename, an absolute OS path, or a
+            directory) and `hint` is the widget's name. Returns
+            { tabs: [{label, kind, frames}] } — frames are viewer frame dicts —
+            or { error } with a message to show the user.
+            """
+            if media_resolve is None:
+                return web.json_response(
+                    {"error": "media resolver unavailable on this install"}, status=500)
+
+            if request.method == "POST":
+                try:
+                    data = await request.json()
+                except Exception:
+                    data = {}
+            else:
+                data = dict(request.query)
+
+            def _int(key, default=0):
+                try:
+                    return int(data.get(key, default) or default)
+                except Exception:
+                    return default
+
+            value = str(data.get("value") or "").strip()
+            if not value:
+                return web.json_response({"error": "no media value given"}, status=400)
+
+            try:
+                tabs = media_resolve.resolve(
+                    value,
+                    hint=str(data.get("hint") or ""),
+                    ann_type=str(data.get("type") or ""),
+                    skip=_int("skip"),
+                    cap=_int("cap"),
+                    every=_int("every", 1),
+                )
+            except ValueError as e:
+                return web.json_response({"error": str(e)}, status=404)
+            except Exception as e:
+                traceback.print_exc()
+                return web.json_response({"error": str(e)}, status=500)
+
+            return web.json_response({"tabs": tabs})
+
         async def _bepic_health(_request):
             return web.json_response({"ok": True, "service": "bepic_templates"})
 
@@ -271,6 +338,10 @@ try:
         _safe_add("GET", "/api/bepic/view_file", _bepic_view_file)
         _safe_add("POST", "/bepic/save_annotation", _bepic_save_annotation)
         _safe_add("POST", "/api/bepic/save_annotation", _bepic_save_annotation)
+        _safe_add("POST", "/bepic/resolve_media", _bepic_resolve_media)
+        _safe_add("POST", "/api/bepic/resolve_media", _bepic_resolve_media)
+        _safe_add("GET", "/bepic/resolve_media", _bepic_resolve_media)
+        _safe_add("GET", "/api/bepic/resolve_media", _bepic_resolve_media)
         _safe_add("GET", "/bepic/viewer", _bepic_viewer_page)
         _safe_add("GET", "/api/bepic/viewer", _bepic_viewer_page)
         _safe_add("GET", "/imageviewer", _bepic_viewer_page)

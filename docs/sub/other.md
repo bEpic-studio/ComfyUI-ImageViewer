@@ -12,6 +12,28 @@ You can load any folder of images from your computer into the viewer — no Comf
 3. A new tab labelled `folder_<name>` is created containing all found images as a sequence.
 4. Use the timeline and playback controls to browse the sequence.
 
+---
+
+## Send to Image Viewer (from any loader node)
+
+Right-click any node on the canvas that loads a media file and choose **Send to Image Viewer** — no rewiring, no workflow run. The entry only appears on nodes that actually hold a file, so it stays out of the way everywhere else.
+
+It works with whatever the node keeps in its widget:
+
+| Node kind | Widget holds | Opens as |
+|---|---|---|
+| VHS **Load Video (Path)** / **Load Image (Path)** | an absolute OS path | the original file on disk |
+| VHS **Load Video** / native **Load Image**, **Load Video** | a filename under `./input` | that uploaded file |
+| VHS **Load Images (Path)** and other folder loaders | a directory | the whole image sequence, on the timeline |
+| Third-party loaders | any widget naming a media file | resolved the same way |
+
+Notes:
+
+- Directory loaders honour the node's `skip_first_images` / `image_load_cap` / `select_every_nth` widgets, so the viewer shows exactly the frames the node will feed downstream.
+- Videos are probed for their real frame rate and length, so the timeline is frame-accurate.
+- Sending again from the same node reuses that node's tab and pushes the previous media onto its [history strip](tabs-history.md#history-snapshots), rather than piling up tabs.
+- Formats a browser can't display (`exr`, `tiff`, `dpx`, …) are converted to a PNG preview on the fly — only for the frames you actually look at, so long sequences open instantly.
+
 ### Path Bar Overlay
 
 When viewing an externally loaded image, a **path bar** appears at the bottom of the viewport showing the file's path. Click it to expand and see the full path — useful when comparing many similarly-named files.

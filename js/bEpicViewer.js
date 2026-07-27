@@ -14,10 +14,16 @@ import { ToolsMixin }    from "./bEpicViewer_tools.js";
 import { RotoMixin }     from "./bEpicViewer_roto.js";
 import { AnnotateMixin } from "./bEpicViewer_annotate.js";
 import { DnDMixin }      from "./bEpicViewer_mixinDnD.js";
+import { SendFromNodeMixin, registerSendToViewerMenu } from "./bEpicViewer_sendFromNode.js";
 import { registerSendNode } from "./bEpicViewer_nodeTools.js";
 
 let globalViewerPanel = null;
 const watchedNodeIds  = new Set();
+
+// Tab keys the user opened by hand rather than ones mirroring a node in the
+// graph: 📂 Open Folder, 📥 dropped files, and 🖼/🎬 "Send to Image Viewer".
+// Nothing in the graph backs them, so the stale-tab sweep must leave them be.
+const USER_TAB_PREFIXES = ["folder_", "dropped_", "loader_"];
 let isViewerPanelToggledOn = false;
 let _actionBarStateRetryTimer = null;
 
@@ -921,7 +927,9 @@ class ViewerPanel extends HTMLElement {
             }
         });
 
-        // Remove stale keys (folder tabs are user-managed, never auto-removed)
+        // Remove stale keys. User-opened tabs (Open Folder, dropped files,
+        // "Send to Image Viewer") aren't backed by a node in the graph, so they
+        // are user-managed and never auto-removed.
         const expected = new Set();
         app.graph.nodes.forEach(n => {
             if (n.type === 'bEpicSendToViewer') {
@@ -941,7 +949,7 @@ class ViewerPanel extends HTMLElement {
             }
         });
         Object.keys(this.allTabs).forEach(existingKey => {
-            if (existingKey.startsWith('folder_')) return;
+            if (USER_TAB_PREFIXES.some(p => existingKey.startsWith(p))) return;
             if (!expected.has(existingKey) && !(data.tabs && Object.values(data.tabs).some(arr => arr === this.allTabs[existingKey]))) {
                 delete this.allTabs[existingKey];
                 delete this.tabLabels[existingKey];
@@ -1066,6 +1074,7 @@ Object.assign(
     RotoMixin,
     AnnotateMixin,
     DnDMixin,
+    SendFromNodeMixin,
 );
 
 if (!customElements.get("bepic-viewer-panel")) {
@@ -1197,10 +1206,13 @@ app.registerExtension({
             registerSendNode(nodeType, nodeData);
         }
 
-        const getExtraMenuOptions = nodeType.prototype.getExtraMenuOptions;
-        nodeType.prototype.getExtraMenuOptions = function (_, options) {
-            getExtraMenuOptions?.apply(this, arguments);
-        };
+        // Right-click → "Send to Image Viewer" on any node holding a media file
+        // (VHS + native loaders alike). The entry hides itself on nodes without
+        // one, so this is safe to register for every node type.
+        registerSendToViewerMenu(nodeType, {
+            getPanel:  () => globalViewerPanel,
+            showPanel: () => _setViewerPanelToggle(true, { syncDisplay: true }),
+        });
     },
 });
 } catch (e) {

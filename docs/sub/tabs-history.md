@@ -12,6 +12,7 @@ Every image source gets its own tab. Tabs are created automatically when:
 
 - A **bEpic Send To Image Viewer** node runs — the tab name is set by the node's `tab_name` field (defaults to the node's unique ID if left blank).
 - You **Open a Folder** via the file-browser button — a `folder_*` tab is created for the images in that directory.
+- You right-click a **loader node** on the canvas and choose **Send to Image Viewer** — see [Send to Image Viewer](other.md#send-to-image-viewer-from-any-loader-node).
 
 
 ### Naming Tabs

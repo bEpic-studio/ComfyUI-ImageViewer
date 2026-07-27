@@ -21,6 +21,7 @@ bEpic ImageViewer is a custom node extension for [ComfyUI](https://github.com/co
 | **Exposure & Channels** | ±4 EV exposure slider. Isolate R/G/B channels for data inspection. |
 | **Parameter Panel** | Live widget values for the selected ComfyUI node — editable in the viewer. |
 | **File Browser** | Open any folder of images as a new viewer tab. |
+| **Send from Loaders** | Right-click any VHS or native loader node → *Send to Image Viewer*. |
 | **Undock / Multi-Monitor** | Pop the viewer into its own browser window for a second screen. |
 
 ## How It Works
@@ -47,7 +48,7 @@ All viewer state — open tabs, history stacks, panel positions, layouts — is 
 | [Playback Controls](sub/playback.md) | Playing sequences, timeline scrubbing, loop modes, sub-range |
 | [Channels & Exposure](sub/channels-exposure.md) | Exposure slider, RGB isolation, interactive E-drag |
 | [Parameter Panel](sub/params-panel.md) | Live node params, lock, dock, resize |
-| [Other Features](sub/other.md) | File browser, undocking, layouts, cache management |
+| [Other Features](sub/other.md) | File browser, send from loader nodes, undocking, layouts, cache management |
 | [Node Reference](sub/nodes.md) | Full input/output spec for the bEpicSendToViewer node |
 | [Keyboard Shortcuts](sub/hotkeys.md) | Complete hotkey reference |
 
