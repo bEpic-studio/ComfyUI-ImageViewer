@@ -6,12 +6,14 @@
 // third-party loaders that name their widget something else — and is hidden on
 // nodes with nothing to show, so it costs nothing on the rest of the graph.
 //
-// The raw widget string is resolved server-side (/bepic/resolve_media), which
-// knows how to turn it into real files:
+// The media is resolved server-side (/bepic/resolve_media), which knows how to
+// turn what the node holds into real files:
 //   • "clip.mp4" / "sub/img.png [output]"  → looked up under ./input|output|temp
 //   • an absolute OS path                  → used as-is (VHS "(Path)" loaders)
 //   • a directory                          → expanded to the whole image
 //     sequence, honouring the node's skip / cap / every-nth trim widgets
+//   • an explicit file list                → the AYON container loaders, whose
+//     media lives in a JSON blob rather than a path widget
 // It hands back the same frame dicts bEpicSendToViewer pushes over the
 // websocket, so the viewer displays them through its normal path.
 import { api } from "../../scripts/api.js";
@@ -33,6 +35,13 @@ const DIR_WIDGETS = new Set(["directory", "folder"]);
 // VHS sequence-trimming widgets, mirrored so the viewer shows the same frames
 // the node will actually load.
 const TRIM_WIDGETS = { skip: "skip_first_images", cap: "image_load_cap", every: "select_every_nth" };
+
+// The AYON (Ynput) container loaders keep their media in a JSON blob instead of
+// a path widget:  { name, image_upload_info: [{name, subfolder}], ... }, every
+// entry uploaded into ComfyUI's ./input.
+const AYON_WIDGET      = "ayon_container_info";
+const AYON_VIDEO_NODE  = "AYON Load Video";        // loads only the first entry
+const AYON_SKIP_NODES  = new Set(["AYON Load 3D Model"]);   // nothing to show
 
 // ComfyUI annotates combo filenames with their source dir: "mask.png [input]".
 function stripAnnotation(value) {
@@ -64,6 +73,39 @@ export function findMediaWidget(node) {
     return widgets.find((w) => w && looksLikeMedia(w)) || null;
 }
 
+/** The files an AYON container loader holds, or null when it isn't one. */
+export function findAyonMedia(node) {
+    if (!node || AYON_SKIP_NODES.has(node.type)) return null;
+    const w = ((node.widgets) || []).find((x) => x && x.name === AYON_WIDGET);
+    const raw = widgetString(w);
+    if (!raw) return null;
+
+    let container = null;
+    try { container = JSON.parse(raw); } catch (_) { return null; }
+    let infos = container && container.image_upload_info;
+    if (!Array.isArray(infos) || infos.length === 0) return null;
+
+    // "AYON Load Video" only ever loads the first entry, so show just that one.
+    if (node.type === AYON_VIDEO_NODE) infos = infos.slice(0, 1);
+
+    // Entries are ./input-relative {subfolder, name}, already forward-slashed.
+    const files = infos
+        .map((i) => [i && i.subfolder, i && i.name].filter(Boolean).join("/"))
+        .filter(Boolean);
+    if (files.length === 0) return null;
+
+    // The product name reads far better on a tab than a hashed filename.
+    return { files, type: "input", label: container.name || node.title || "" };
+}
+
+/** What this node has to show, in whichever shape it stores it, or null. */
+function findMediaSource(node) {
+    const ayon = findAyonMedia(node);
+    if (ayon) return ayon;
+    const widget = findMediaWidget(node);
+    return widget ? { widget } : null;
+}
+
 function trimValues(node) {
     const out = { skip: 0, cap: 0, every: 1 };
     const widgets = (node && node.widgets) || [];
@@ -75,21 +117,35 @@ function trimValues(node) {
     return out;
 }
 
-async function sendNodeToViewer(node, widget, ctx) {
+// The request body + what to call the media in an error message, for either
+// source shape (a path widget, or an AYON container's file list).
+function resolveRequest(node, source) {
+    if (source.files) {
+        return {
+            body:  { files: source.files, type: source.type || "input", label: source.label || "" },
+            shown: source.label || source.files[0],
+        };
+    }
+    const { value, type } = stripAnnotation(widgetString(source.widget));
+    return {
+        body:  { value, type, hint: source.widget.name || "", ...trimValues(node) },
+        shown: value,
+    };
+}
+
+async function sendNodeToViewer(node, source, ctx) {
     const panel = ctx.getPanel && ctx.getPanel();
     if (!panel) { console.warn("[bEpicViewer] viewer panel not ready"); return; }
 
-    const raw = widgetString(widget);
-    if (!raw) return;
-    const { value, type } = stripAnnotation(raw);
-    const trims = trimValues(node);
+    const { body, shown } = resolveRequest(node, source);
+    if (!shown) return;
 
     let data = null;
     try {
         const resp = await api.fetchApi("/bepic/resolve_media", {
             method:  "POST",
             headers: { "Content-Type": "application/json" },
-            body:    JSON.stringify({ value, type, hint: widget.name || "", ...trims }),
+            body:    JSON.stringify(body),
         });
         data = await resp.json();
     } catch (e) {
@@ -101,9 +157,12 @@ async function sendNodeToViewer(node, widget, ctx) {
     if (!data || data.error || !Array.isArray(data.tabs) || data.tabs.length === 0) {
         const msg = (data && data.error) || "nothing to show";
         console.warn("[bEpicViewer] send to viewer:", msg);
-        alert(`bEpic Viewer – could not open "${value}":\n${msg}`);
+        alert(`bEpic Viewer – could not open "${shown}":\n${msg}`);
         return;
     }
+    // A partly-uploaded container still opens — say so rather than silently
+    // showing fewer frames than the node will load.
+    if (data.warning) console.warn("[bEpicViewer]", data.warning);
 
     if (ctx.showPanel) ctx.showPanel();
     panel.openNodeMedia(node, data.tabs);
@@ -115,11 +174,11 @@ export function registerSendToViewerMenu(nodeType, ctx) {
     nodeType.prototype.getExtraMenuOptions = function (canvas, options) {
         const r = getExtraMenuOptions?.apply(this, arguments);
         try {
-            const widget = findMediaWidget(this);
-            if (widget && Array.isArray(options)) {
+            const source = findMediaSource(this);
+            if (source && Array.isArray(options)) {
                 options.push({
                     content:  "Send to Image Viewer",
-                    callback: () => sendNodeToViewer(this, widget, ctx),
+                    callback: () => sendNodeToViewer(this, source, ctx),
                 });
             }
         } catch (e) {

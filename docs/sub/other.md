@@ -25,11 +25,13 @@ It works with whatever the node keeps in its widget:
 | VHS **Load Video (Path)** / **Load Image (Path)** | an absolute OS path | the original file on disk |
 | VHS **Load Video** / native **Load Image**, **Load Video** | a filename under `./input` | that uploaded file |
 | VHS **Load Images (Path)** and other folder loaders | a directory | the whole image sequence, on the timeline |
+| **AYON Load Image** / **AYON Load Video** | a container JSON | the loaded representation, labelled with its product name |
 | Third-party loaders | any widget naming a media file | resolved the same way |
 
 Notes:
 
 - Directory loaders honour the node's `skip_first_images` / `image_load_cap` / `select_every_nth` widgets, so the viewer shows exactly the frames the node will feed downstream.
+- AYON containers open exactly what the node loads: a multi-frame **AYON Load Image** becomes one scrubbable sequence, **AYON Load Video** shows the first entry (the only one it uses), and **AYON Load 3D Model** gets no menu entry since there is nothing to display. If part of a container has not been uploaded to `./input`, the rest still opens and the console notes what was missing.
 - Videos are probed for their real frame rate and length, so the timeline is frame-accurate.
 - Sending again from the same node reuses that node's tab and pushes the previous media onto its [history strip](tabs-history.md#history-snapshots), rather than piling up tabs.
 - Formats a browser can't display (`exr`, `tiff`, `dpx`, …) are converted to a PNG preview on the fly — only for the frames you actually look at, so long sequences open instantly.

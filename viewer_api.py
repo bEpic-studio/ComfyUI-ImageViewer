@@ -274,13 +274,18 @@ try:
             })
 
         async def _bepic_resolve_media(request):
-            """Resolve a loader node's media widget value into viewer tabs.
+            """Resolve a loader node's media into viewer tabs.
 
-            Body/query: { value, hint, type, skip, cap, every } where `value` is
-            the raw widget string (a ./input filename, an absolute OS path, or a
-            directory) and `hint` is the widget's name. Returns
-            { tabs: [{label, kind, frames}] } — frames are viewer frame dicts —
-            or { error } with a message to show the user.
+            Two body/query forms, matching how loaders store their media:
+              { value, hint, type, skip, cap, every } — `value` is a raw widget
+                string (a ./input filename, an absolute OS path, or a directory)
+                and `hint` is the widget's name.
+              { files: [...], type, label } — an explicit list of files the node
+                loads, used by container-style loaders (AYON) whose media lives
+                in a JSON blob instead of a path widget.
+
+            Returns { tabs: [{label, kind, frames}] } — frames are viewer frame
+            dicts — or { error } with a message to show the user.
             """
             if media_resolve is None:
                 return web.json_response(
@@ -300,26 +305,42 @@ try:
                 except Exception:
                     return default
 
+            files = data.get("files")
+            if isinstance(files, str):          # GET form: comma-separated
+                files = [f for f in files.split(",") if f.strip()]
             value = str(data.get("value") or "").strip()
-            if not value:
+            if not value and not files:
                 return web.json_response({"error": "no media value given"}, status=400)
 
+            missing = []
             try:
-                tabs = media_resolve.resolve(
-                    value,
-                    hint=str(data.get("hint") or ""),
-                    ann_type=str(data.get("type") or ""),
-                    skip=_int("skip"),
-                    cap=_int("cap"),
-                    every=_int("every", 1),
-                )
+                if files:
+                    tabs, missing = media_resolve.resolve_files(
+                        files,
+                        ann_type=str(data.get("type") or "input"),
+                        label=str(data.get("label") or ""),
+                    )
+                else:
+                    tabs = media_resolve.resolve(
+                        value,
+                        hint=str(data.get("hint") or ""),
+                        ann_type=str(data.get("type") or ""),
+                        skip=_int("skip"),
+                        cap=_int("cap"),
+                        every=_int("every", 1),
+                    )
             except ValueError as e:
                 return web.json_response({"error": str(e)}, status=404)
             except Exception as e:
                 traceback.print_exc()
                 return web.json_response({"error": str(e)}, status=500)
 
-            return web.json_response({"tabs": tabs})
+            payload = {"tabs": tabs}
+            if missing:
+                payload["warning"] = (
+                    f"{len(missing)} file(s) referenced by the node are missing "
+                    f"from ./input")
+            return web.json_response(payload)
 
         async def _bepic_health(_request):
             return web.json_response({"ok": True, "service": "bepic_templates"})

@@ -370,3 +370,46 @@ def resolve(raw, hint="", ann_type="", skip=0, cap=0, every=1):
     if "video" in (hint or "").lower():
         return [{"label": name, "kind": "video", "frames": [_video_frame(path)]}]
     raise ValueError(f"{name!r} is not a supported image or video format")
+
+
+def resolve_files(files, ann_type="input", label=""):
+    """Turn an explicit list of media files into viewer tab descriptors.
+
+    For container-style loaders (AYON) that keep their media in a JSON blob
+    rather than a path widget: the caller has already picked the files the node
+    loads, in load order, each relative to ./input. Several images are one
+    sequence — that is how the node batches them — while videos get a tab each.
+
+    Returns (tabs, missing) so a partly-uploaded container still shows what it
+    can instead of failing outright.
+    """
+    resolved, missing = [], []
+    for entry in files or []:
+        path = resolve_path(entry, ann_type or "input")
+        if path and os.path.isfile(path):
+            resolved.append(path)
+        else:
+            missing.append(str(entry))
+
+    if not resolved:
+        shown = ", ".join(missing[:3]) + ("…" if len(missing) > 3 else "")
+        raise ValueError(f"none of the container's files are on disk: {shown}")
+
+    images = [p for p in resolved if os.path.splitext(p)[1].lower() in IMAGE_EXTS]
+    videos = [p for p in resolved if os.path.splitext(p)[1].lower() in VIDEO_EXTS]
+
+    if images:
+        name = label or os.path.basename(images[0])
+        if len(images) == 1:
+            tabs = [{"label": name, "kind": "image",
+                     "frames": [_image_frame(images[0])]}]
+        else:
+            tabs = [{"label": f"{name} ({len(images)})", "kind": "sequence",
+                     "frames": [_image_frame(p) for p in images]}]
+    elif videos:
+        tabs = [{"label": label or os.path.basename(p), "kind": "video",
+                 "frames": [_video_frame(p)]} for p in videos]
+    else:
+        raise ValueError("nothing viewable in the container — 3D models and "
+                         "other non-image formats can't be shown")
+    return tabs, missing
