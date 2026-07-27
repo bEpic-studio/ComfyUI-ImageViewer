@@ -12,13 +12,17 @@ You can load any folder of images from your computer into the viewer — no Comf
 3. A new tab labelled `folder_<name>` is created containing all found images as a sequence.
 4. Use the timeline and playback controls to browse the sequence.
 
+### Path Bar Overlay
+
+When viewing an externally loaded image, a **path bar** appears at the bottom of the viewport showing the file's path. Click it to expand and see the full path — useful when comparing many similarly-named files.
+
 ---
 
-## Send to Image Viewer (from any loader node)
+## Send to Image Viewer
 
-Right-click any node on the canvas that loads a media file and choose **Send to Image Viewer** — no rewiring, no workflow run. The entry only appears on nodes that actually hold a file, so it stays out of the way everywhere else.
+Right-click a node on the canvas and choose **Send to Image Viewer**. Nodes that already point at a file open it straight away; nodes further down the graph offer **Send to Image Viewer (run branch)** instead and are described [below](#nodes-with-no-file-run-branch). The entry is hidden on nodes with nothing to show, so it stays out of the way everywhere else.
 
-It works with whatever the node keeps in its widget:
+For a loader, it works with whatever the node keeps in its widget — no rewiring, no workflow run:
 
 | Node kind | Widget holds | Opens as |
 |---|---|---|
@@ -36,9 +40,18 @@ Notes:
 - Sending again from the same node reuses that node's tab and pushes the previous media onto its [history strip](tabs-history.md#history-snapshots), rather than piling up tabs.
 - Formats a browser can't display (`exr`, `tiff`, `dpx`, …) are converted to a PNG preview on the fly — only for the frames you actually look at, so long sequences open instantly.
 
-### Path Bar Overlay
+### Nodes with no file: run branch
 
-When viewing an externally loaded image, a **path bar** appears at the bottom of the viewport showing the file's path. Click it to expand and see the full path — useful when comparing many similarly-named files.
+Any node carrying an `IMAGE`, `MASK` or `VIDEO` output — a VAE Decode, an upscaler, a mask op — can be viewed too. Since there is no file to read, choosing **Send to Image Viewer (run branch)** queues the branch feeding that node once through the normal ComfyUI queue and shows the result.
+
+- **Only the branch runs.** The prompt is pruned to the node and its upstream dependencies, so the workflow's other output nodes are left out — viewing a node never writes files as a side effect.
+- **Your graph is never touched.** The capture node is added to the queued prompt only, so node ids, wiring and undo history stay exactly as they were.
+- **Terminal nodes work too.** Save Image and Preview Image have no output slots, so they show what feeds them — a preview of what they would write, without writing it.
+- Unchanged upstream nodes come from ComfyUI's cache, so a second run is usually instant.
+- Re-running lands in the same tab and stacks the previous result in its history strip, which makes it easy to A/B a parameter change against the last one.
+
+> [!NOTE]
+> A muted or bypassed node isn't part of the prompt and can't be run — the viewer says so rather than queueing something that would fail.
 
 ---
 

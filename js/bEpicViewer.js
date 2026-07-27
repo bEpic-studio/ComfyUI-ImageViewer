@@ -1181,6 +1181,11 @@ app.registerExtension({
         });
 
         api.addEventListener("bepic.viewer.update", (e) => {
+            // "Send to Image Viewer (run branch)" queues a prompt with its own
+            // throwaway sink node. That sink has no counterpart in the graph, so
+            // it is routed to its originating node's tab instead of the normal
+            // node-mirroring path.
+            if (globalViewerPanel.consumeInlineSend?.(e.detail)) return;
             const node = app.graph.getNodeById(e.detail.unique_id);
             globalViewerPanel.updateData(e.detail, node);
         });
