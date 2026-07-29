@@ -392,6 +392,7 @@ class ViewerPanel extends HTMLElement {
         this.contactContainer = sr.getElementById('contact-container');
         this.slider           = sr.getElementById('compare-slider');
         this.timeline         = sr.getElementById('timeline');
+        this.cacheBar         = sr.getElementById('timeline-cached');
         this.playBtn          = sr.getElementById('play');
         this.viewport         = sr.getElementById('viewport');
         this.rotateBtn        = sr.getElementById('rotate-btn');
@@ -402,6 +403,7 @@ class ViewerPanel extends HTMLElement {
         this.shapeOverlay     = sr.getElementById('shape-overlay');
         this.layoutSel        = sr.getElementById('layout-sel');
         this.refreshBtn       = sr.getElementById('refresh');
+        this.ramCacheBtn      = sr.getElementById('ram-cache-btn');
         this.helpBtn          = sr.getElementById('help-btn');
         this.helpOverlay      = sr.getElementById('hotkey-help');
         this.exposureControl  = sr.getElementById('exposure-control');
@@ -708,6 +710,8 @@ class ViewerPanel extends HTMLElement {
         sr.getElementById('fit-btn').onclick  = () => this.fitView();
         sr.getElementById('loop-sel').onchange = (e) => { this.loopMode = e.target.value; };
         this.refreshBtn.onclick   = () => { this.refreshBtn.classList.add('running'); app.queuePrompt(0); };
+        if (this.ramCacheBtn) this.ramCacheBtn.onclick = () => this.toggleVideoRamCache();
+        this.loadVideoRamCachePref();
         this.bindClearButton();
 
         this.rotateBtn.onclick = () => this.cycleSliderMode();

@@ -41,6 +41,16 @@ The **Rotate** button in the toolbar cycles through three modes:
 | **Horizontal Split** | Top/bottom division. Drag divider vertically. |
 | **Contact Sheet** | Both images stacked vertically in full — no divider, scroll to compare. |
 
+### Sources of Different Resolution
+
+You can compare media that don't share a resolution or aspect ratio — a 1080p render against a 720p one, or a portrait clip against a landscape one. The second source is scaled to line up with the first along the axis the divider travels across:
+
+| Mode | Matched | Why |
+|---|---|---|
+| **Vertical Split** | Heights | The divider slides left/right, so both frames must share a top and bottom edge. |
+| **Horizontal Split** | Widths | The divider slides up/down, so both frames must share a left and right edge. |
+
+Switching orientation re-derives the match, so the pair stays aligned as you cycle modes. Sources that already render at the same size are left untouched. **Contact Sheet** doesn't scale anything this way — it scales both to a shared height and lays them out side by side.
 
 ---
 

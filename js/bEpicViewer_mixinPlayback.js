@@ -3,24 +3,227 @@
 import { api } from "../../scripts/api.js";
 import { app } from "../../scripts/app.js";
 
+// ── Video RAM cache ──────────────────────────────────────────────────────────
+// Streaming an mp4 off the ComfyUI server means a range request every time the
+// decoder runs low on data, and a fresh one after every loop, scrub and seek.
+// Those round-trips share an event loop with prompt execution, so they arrive
+// late in bursts and the playhead visibly hitches. Pulling the file into memory
+// once and playing from a blob: URL takes the server out of the playback path
+// altogether — after the first read the decoder never waits on I/O again.
+
+const VIDEO_RAM_BUDGET   = 1536 * 1024 * 1024;   // total bytes held across clips
+const VIDEO_RAM_MAX_FILE = 512  * 1024 * 1024;   // stream anything bigger
+const RAM_CACHE_PREF_KEY = "bEpicViewer:ramCache:v1";
+
+const _videoRam        = new Map();   // url -> {blobUrl, bytes}; insertion order = LRU
+const _videoRamPending = new Map();   // url -> in-flight fetch promise
+
+function _videoRamGet(url) {
+    const hit = _videoRam.get(url);
+    if (!hit) return null;
+    _videoRam.delete(url);            // re-insert so it counts as most-recently used
+    _videoRam.set(url, hit);
+    return hit.blobUrl;
+}
+
+// Drop least-recently-used clips until the cache is back inside its budget.
+function _videoRamEvict() {
+    let total = 0;
+    for (const entry of _videoRam.values()) total += entry.bytes;
+    for (const [url, entry] of _videoRam) {
+        if (total <= VIDEO_RAM_BUDGET) break;
+        try { URL.revokeObjectURL(entry.blobUrl); } catch (e) {}
+        _videoRam.delete(url);
+        total -= entry.bytes;
+    }
+}
+
+function _videoRamFetch(url) {
+    const inFlight = _videoRamPending.get(url);
+    if (inFlight) return inFlight;
+    const job = (async () => {
+        const res = await fetch(url, { credentials: "same-origin" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const declared = Number(res.headers.get("content-length") || 0);
+        if (declared > VIDEO_RAM_MAX_FILE) throw new Error("clip too large to cache");
+        const blob = await res.blob();
+        if (blob.size > VIDEO_RAM_MAX_FILE) throw new Error("clip too large to cache");
+        const blobUrl = URL.createObjectURL(blob);
+        _videoRam.set(url, { blobUrl, bytes: blob.size });
+        _videoRamEvict();
+        return blobUrl;
+    })();
+    _videoRamPending.set(url, job);
+    job.catch(() => {}).then(() => _videoRamPending.delete(url));
+    return job;
+}
+
+// Frame URLs the browser has decoded at least once this session. Those come back
+// from its image cache (a 304 at worst) instead of a full re-download, which is
+// what the timeline's green bar reports for sequences.
+const _loadedFrameUrls = new Set();
+// Bumped whenever that set grows, so the timeline can tell in O(1) whether a
+// rescan of the current sequence could possibly produce a different answer.
+let _loadedEpoch = 0;
+
+function _markFrameLoaded(url) {
+    if (!url || _loadedFrameUrls.has(url)) return false;
+    _loadedFrameUrls.add(url);
+    _loadedEpoch++;
+    return true;
+}
+
+// Release every cached clip. Called by Clear Cache, which deletes the temp files
+// these blobs were read from.
+export function clearVideoRamCache() {
+    for (const entry of _videoRam.values()) {
+        try { URL.revokeObjectURL(entry.blobUrl); } catch (e) {}
+    }
+    _videoRam.clear();
+    _videoRamPending.clear();
+    _loadedFrameUrls.clear();
+    _loadedEpoch++;          // invalidates every timeline's cached-frame scan
+}
+
 export const PlaybackMixin = {
 
     // ── Image URL builder ────────────────────────────────────────────────────
 
+    // Frames served by our own routes get a STABLE url — those routes send
+    // `Cache-Control: no-cache` plus an ETag, so the browser revalidates and
+    // still picks up an overwritten file, while an unchanged frame costs a 304
+    // instead of a full re-decode. A per-call timestamp here would defeat
+    // _setImgSrcCached and re-fetch every frame on each pass through a sequence,
+    // which is what made playback and wipe-compare stutter.
+    //
+    // The /view fallback is ComfyUI's own route and sends no Cache-Control, so it
+    // keeps the cache-buster rather than risk a stale frame. Only path-less
+    // frames (a workflow's own SaveImage output) land there, so nothing the
+    // viewer itself writes pays that cost.
     buildImgUrl(imgObj) {
         if (!imgObj) return '';
         // Dropped OS files are served straight from an in-memory blob: URL — it is
-        // already unique per file, so never cache-bust or rewrite it.
+        // already unique per file, so never rewrite it.
         if (imgObj.url) return imgObj.url;
         if (imgObj.path) {
             const endpoint = imgObj.external ? '/bepic/view_file' : '/bepic/raw_view';
-            return api.apiURL(`${endpoint}?path=${encodeURIComponent(imgObj.path)}&t=${Date.now()}`);
+            return api.apiURL(`${endpoint}?path=${encodeURIComponent(imgObj.path)}`);
         }
         let params = `?filename=${encodeURIComponent(imgObj.filename || '')}`;
         if (imgObj.type)     params += `&type=${imgObj.type}`;
         if (imgObj.subfolder) params += `&subfolder=${encodeURIComponent(imgObj.subfolder)}`;
         params += `&t=${Date.now()}`;
         return api.apiURL(`/view${params}`);
+    },
+
+    // Point a <video> at `url`, preferring the in-RAM copy. A clip that isn't
+    // cached yet streams exactly as before and swaps over to the blob the moment
+    // the download lands — keeping its position and play state — so playback
+    // starts instantly and turns smooth rather than stalling on a full download.
+    _setVideoSrc(v, url) {
+        if (!v || !url) return;
+        v.dataset.srcKey = url;
+        v.preload = "auto";
+
+        // Caching turned off in the toolbar — always stream. (Read through the
+        // accessor so a panel that never loaded the preference still defaults on.)
+        if (!this.isVideoRamCacheEnabled()) { if (v.src !== url) v.src = url; return; }
+
+        const cached = _videoRamGet(url);
+        if (cached) { if (v.src !== cached) v.src = cached; return; }
+
+        if (v.src !== url) v.src = url;
+        _videoRamFetch(url).then((blobUrl) => {
+            // Bail if the element moved on to another clip, or caching was turned
+            // off, while we were downloading.
+            if (!blobUrl || !this.isVideoRamCacheEnabled()) return;
+            if (v.dataset.srcKey !== url || v.src === blobUrl) return;
+            this._reSourceVideo(v, blobUrl, () => {
+                // The blob wouldn't decode here (an undocked popout resolving a
+                // blob from another document, say) — go back to streaming.
+                if (v.dataset.srcKey === url) v.src = url;
+            });
+        }).catch(() => { /* keep streaming — the direct URL is already playing */ });
+    },
+
+    // Re-point a <video> at another URL for the SAME clip without losing where it
+    // was. `onFail` runs if the new source won't load.
+    _reSourceVideo(v, url, onFail) {
+        const resumeAt   = v.currentTime;
+        const wasPlaying = !v.paused;
+        // Tells _videoOnMeta this is the same clip re-sourced, not a new one, so
+        // it doesn't re-fit the view and throw away the user's zoom/pan.
+        v._bepicRamSwap = true;
+        const settle = (ok) => {
+            v.removeEventListener("loadedmetadata", onMeta);
+            v.removeEventListener("error", onErr);
+            v._bepicRamSwap = false;
+            if (!ok) { if (onFail) onFail(); return; }
+            try { v.currentTime = resumeAt; } catch (e) {}
+            if (wasPlaying) { const p = v.play(); if (p && p.catch) p.catch(() => {}); }
+        };
+        const onMeta = () => settle(true);
+        const onErr  = () => settle(false);
+        v.addEventListener("loadedmetadata", onMeta);
+        v.addEventListener("error", onErr);
+        v.src = url;
+    },
+
+    // ── RAM cache toggle ─────────────────────────────────────────────────────
+
+    isVideoRamCacheEnabled() { return this.videoRamCacheEnabled !== false; },
+
+    loadVideoRamCachePref() {
+        let on = true;
+        try {
+            const raw = window.localStorage.getItem(RAM_CACHE_PREF_KEY);
+            if (raw !== null) on = raw === "1";
+        } catch (e) {}
+        this.videoRamCacheEnabled = on;
+        this._syncRamCacheButton();
+    },
+
+    _syncRamCacheButton() {
+        const btn = this.ramCacheBtn;
+        if (!btn) return;
+        const on = this.isVideoRamCacheEnabled();
+        btn.classList.toggle("active", on);
+        btn.title = on
+            ? "Video RAM cache: on — clips play from memory (click to stream instead)"
+            : "Video RAM cache: off — clips stream from the server (click to cache in RAM)";
+    },
+
+    toggleVideoRamCache() {
+        this.videoRamCacheEnabled = !this.isVideoRamCacheEnabled();
+        try { window.localStorage.setItem(RAM_CACHE_PREF_KEY, this.videoRamCacheEnabled ? "1" : "0"); }
+        catch (e) {}
+        this._syncRamCacheButton();
+
+        if (!this.videoRamCacheEnabled) {
+            this._releaseVideoRam();
+        } else {
+            // Re-run the source setup for whatever is on screen so the current
+            // clips get pulled into RAM straight away instead of only the next one.
+            [this.videoBase, this.videoCompare].forEach((v) => {
+                if (v && v.dataset && v.dataset.srcKey && v.style.display !== "none") {
+                    this._setVideoSrc(v, v.dataset.srcKey);
+                }
+            });
+        }
+        this._invalidateCacheBar();
+        this.updateCacheBar();
+    },
+
+    // Hand the memory back. Anything currently playing from a blob has to be
+    // pointed at its streaming URL FIRST — revoking the blob under a live
+    // <video> would drop its source mid-playback.
+    _releaseVideoRam() {
+        [this.videoBase, this.videoCompare].forEach((v) => {
+            if (!v || !v.dataset || !v.dataset.srcKey) return;
+            if (!/^blob:/.test(v.src || "")) return;
+            this._reSourceVideo(v, v.dataset.srcKey);
+        });
+        clearVideoRamCache();
     },
 
     // Thumbnail URL for a frame. Video frames carry an extracted `thumb` PNG
@@ -55,7 +258,7 @@ export const PlaybackMixin = {
     getImgCount() {
         // A video tab holds a single frame dict but scrubs over many frames.
         if (this._videoMode && this._videoFrames > 0) return this._videoFrames;
-        return (this.allTabs[this.activeTab] || []).length;
+        return (this._baseFrames() || []).length;
     },
 
     getActiveTabNode() {
@@ -117,6 +320,8 @@ export const PlaybackMixin = {
         this.container.querySelector('#total-f').innerText = bounds.max;
         this.updateTicks(Math.max(0, bounds.max - bounds.min));
         this.updateRangeOverlay(imgCount);
+        this._invalidateCacheBar();        // segment percentages are bounds-relative
+        this.updateCacheBar();
         // Keep roto keyframe ticks + curve editor aligned to new timeline bounds.
         if (this._toolState && this._toolState.active === 'roto') {
             this._rotoRenderTimelineKeys && this._rotoRenderTimelineKeys();
@@ -221,7 +426,7 @@ export const PlaybackMixin = {
     // ── View refresh ─────────────────────────────────────────────────────────
 
     refreshView() {
-        const imgs = this.allTabs[this.activeTab];
+        const imgs = this._baseFrames();
         if (!imgs) return;
         this.applyTimelineBounds(imgs.length);
         const bounds    = this.getTimelineBounds(imgs.length);
@@ -231,25 +436,28 @@ export const PlaybackMixin = {
 
     // ── Frame display ─────────────────────────────────────────────────────────
 
-    setFrame(idx) {
-        // --- history-compare mode: show two fixed snapshot frames ---
-        if (this.historyCompare) {
-            const { key, baseIdx, otherIdx } = this.historyCompare;
-            const baseArr  = (this.history[key] && this.history[key][baseIdx])  || [];
-            const otherArr = (this.history[key] && this.history[key][otherIdx]) || [];
-            const bfi = this.displayFrameToImageIndex(idx, baseArr.length);
-            const ofi = this.displayFrameToImageIndex(idx, otherArr.length);
-            this.currentFrame = idx;
-            if (baseArr[bfi])  this._setImgSrcCached(this.imgBase,    this.buildImgUrl(baseArr[bfi]));
-            if (otherArr[ofi]) this._setImgSrcCached(this.imgCompare, this.buildImgUrl(otherArr[ofi]));
-            this.timeline.value = this.currentFrame;
-            this.container.querySelector('#cur-f').innerText = this.currentFrame;
-            if (this.imgBase.naturalWidth) this.updateShapeInfo();
-            return;
-        }
+    // Frames driving the base layer: the pinned snapshot while comparing two
+    // history items, otherwise the active tab.
+    _baseFrames() {
+        const hc = this.historyCompare;
+        if (hc) return (this.history[hc.key] && this.history[hc.key][hc.baseIdx]) || null;
+        return this.allTabs[this.activeTab] || null;
+    },
 
-        const imgs = this.allTabs[this.activeTab];
-        if (!imgs || imgs.length === 0) { this._exitVideoMode(); return; }
+    // Frames driving the compare layer: the second pinned snapshot while
+    // comparing history items, otherwise the compare tab. Having both sources
+    // resolve here is what lets history compare reuse the whole tab-compare
+    // path — video routing, aspect matching and the wipe seam included.
+    _compareFrames() {
+        const hc = this.historyCompare;
+        if (hc) return (this.history[hc.key] && this.history[hc.key][hc.otherIdx]) || null;
+        if (!this.compareTab) return null;
+        return this.allTabs[this.compareTab] || null;
+    },
+
+    setFrame(idx) {
+        const imgs = this._baseFrames();
+        if (!imgs || imgs.length === 0) { this._exitVideoMode(); this.updateCacheBar(); return; }
 
         // Video tab: a single {kind:"video"} entry scrubbed through the <video>.
         // Still refresh the compare slot so a video base shows the second tab in
@@ -274,6 +482,13 @@ export const PlaybackMixin = {
             if (this.updateImageFrame) this.updateImageFrame();
             if (this.updateShapeInfo) this.updateShapeInfo();
             if (this.updateToolOverlay) this.updateToolOverlay();
+            // The aspect-match scale is derived from BOTH media sizes, so the
+            // base decoding last has to re-derive it too — otherwise whichever
+            // layer loaded first keeps a scale computed against a missing size.
+            if (this.isComparing) {
+                this._applyCompareTransform && this._applyCompareTransform();
+                this.updateCompareVisuals && this.updateCompareVisuals();
+            }
         });
 
         // Path bar
@@ -299,14 +514,14 @@ export const PlaybackMixin = {
         }
     },
 
-    // Load the compare tab's frame into the compare slot. Called from both the
+    // Load the compare source's frame into the compare slot. Called from both the
     // image and video base paths so either base still fills the wipe/split/contact
-    // with the second tab. Images go to the compare <img>; a video compare tab is
-    // routed to the dedicated compare <video> (an <img> can't decode a video).
+    // with the second media. Images go to the compare <img>; a video is routed to
+    // the dedicated compare <video> (an <img> can't decode a video).
     _updateCompareFrame(displayFrame) {
-        if (!this.isComparing || !this.compareTab) { this._hideCompareVideo(); return; }
-        const compImgs = this.allTabs[this.compareTab];
-        if (!compImgs || compImgs.length === 0) return;
+        if (!this.isComparing) { this._hideCompareVideo(); return; }
+        const compImgs = this._compareFrames();
+        if (!compImgs || compImgs.length === 0) { this._hideCompareVideo(); return; }
 
         // Video compare tab → drive the compare <video>.
         if (this._frameIsVideo(compImgs[0])) { this._compareVideoSync(displayFrame, compImgs[0]); return; }
@@ -354,8 +569,7 @@ export const PlaybackMixin = {
                 });
                 v._cmpHandlersBound = true;
             }
-            const url = this.buildImgUrl(vObj);
-            if (v.src !== url) v.src = url;
+            this._setVideoSrc(v, this.buildImgUrl(vObj));
             this._compareVideoFps    = (vObj.fps && vObj.fps > 0) ? vObj.fps : (this.fps || 24);
             this._compareVideoFrames = (vObj.frames && vObj.frames > 0) ? vObj.frames : 0;
         }
@@ -414,12 +628,118 @@ export const PlaybackMixin = {
     // Only assign src when it has actually changed, to prevent redundant decodes.
     _setImgSrcCached(imgEl, url, onLoadCallback) {
         imgEl.onerror = () => {};
-        if (onLoadCallback) {
-            imgEl.onload = onLoadCallback;
-        } else {
-            imgEl.onload = null;
-        }
+        imgEl.onload = () => {
+            // A frame that decoded once is in the browser's image cache — record
+            // it so the timeline can show which part of a sequence is local.
+            _markFrameLoaded(url);
+            if (this.updateCacheBar) this.updateCacheBar();
+            if (onLoadCallback) onLoadCallback();
+        };
         if (imgEl.src !== url) imgEl.src = url;
+        // Unchanged src means no load event fires, so record it here instead.
+        else if (imgEl.complete && imgEl.naturalWidth) _markFrameLoaded(url);
+    },
+
+    // ── Cached-frame indicator ────────────────────────────────────────────────
+
+    // Which parts of the current media are held locally, as [firstFrame, lastFrame]
+    // pairs in display-frame space. For a video this is the browser's own buffered
+    // ranges — a clip served from the RAM cache reports its full duration almost
+    // at once. For a sequence it is the frames already decoded this session.
+    _cachedSegments() {
+        const segs = [];
+        if (this._videoMode && this.videoBase) {
+            const fps = this._videoFps || 24;
+            let ranges = null;
+            try { ranges = this.videoBase.buffered; } catch (e) { return segs; }
+            if (!ranges) return segs;
+            for (let i = 0; i < ranges.length; i++) {
+                let a, b;
+                try { a = ranges.start(i); b = ranges.end(i); } catch (e) { continue; }
+                segs.push([Math.floor(a * fps), Math.ceil(b * fps) - 1]);
+            }
+            return segs;
+        }
+
+        const imgs = this._baseFrames();
+        if (!imgs || imgs.length === 0) return segs;
+        // Walk the sequence and coalesce runs of decoded frames into segments.
+        let runStart = -1;
+        for (let i = 0; i < imgs.length; i++) {
+            const local = _loadedFrameUrls.has(this.buildImgUrl(imgs[i]));
+            if (local && runStart < 0) runStart = i;
+            if (!local && runStart >= 0) {
+                segs.push([this.imageIndexToDisplayFrame(runStart, imgs.length),
+                           this.imageIndexToDisplayFrame(i - 1, imgs.length)]);
+                runStart = -1;
+            }
+        }
+        if (runStart >= 0) {
+            segs.push([this.imageIndexToDisplayFrame(runStart, imgs.length),
+                       this.imageIndexToDisplayFrame(imgs.length - 1, imgs.length)]);
+        }
+        return segs;
+    },
+
+    // Force the next updateCacheBar to recompute from scratch. Called whenever
+    // the media or the timeline bounds change under the bar.
+    _invalidateCacheBar() {
+        this._cacheBarSig = null;
+        this._cacheBarGuard = null;
+    },
+
+    updateCacheBar() {
+        const bar = this.cacheBar;
+        if (!bar) return;
+        const imgCount = this.getImgCount();
+        const bounds   = this.getTimelineBounds(imgCount);
+        const span     = bounds.max - bounds.min;
+
+        // A single still has no timeline to speak of — the bar would just be a
+        // full-width block that says nothing.
+        if (imgCount <= 1 || span <= 0) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+
+        // Scanning a sequence costs a URL build per frame, and this runs on every
+        // played frame — so for sequences, bail unless something that could change
+        // the answer actually moved. A video's buffered ranges are a handful of
+        // entries that grow on their own, so those always recompute.
+        if (this._videoMode) {
+            this._cacheBarGuard = null;
+        } else {
+            const hc = this.historyCompare;
+            const source = hc ? `${hc.key}:${hc.baseIdx}` : String(this.activeTab);
+            const guard = `${_loadedEpoch}|${source}|${bounds.min}-${bounds.max}|${imgCount}`;
+            if (guard === this._cacheBarGuard) return;
+            this._cacheBarGuard = guard;
+        }
+
+        const parts = [];
+        for (const [from, to] of this._cachedSegments()) {
+            const a = Math.max(bounds.min, Math.min(bounds.max, from));
+            const b = Math.max(bounds.min, Math.min(bounds.max, to));
+            if (b < a) continue;
+            // Frames are points on the slider, but each covers a slot on screen, so
+            // the last one is drawn a whole frame wide instead of collapsing to 0%.
+            const left  = ((a - bounds.min) / span) * 100;
+            const width = ((b - a + 1) / span) * 100;
+            parts.push([left, Math.min(width, 100 - left)]);
+        }
+
+        const sig = parts.map(p => `${p[0].toFixed(3)}:${p[1].toFixed(3)}`).join('|');
+        if (sig === this._cacheBarSig) return;      // nothing moved, skip the rebuild
+        this._cacheBarSig = sig;
+
+        if (parts.length === 0) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+        const frag = document.createDocumentFragment();
+        for (const [left, width] of parts) {
+            const seg = document.createElement('i');
+            seg.style.left  = `${left}%`;
+            seg.style.width = `${width}%`;
+            frag.appendChild(seg);
+        }
+        bar.innerHTML = '';
+        bar.appendChild(frag);
+        bar.style.display = 'block';
     },
 
     // ── Video playback ────────────────────────────────────────────────────────
@@ -444,6 +764,7 @@ export const PlaybackMixin = {
 
         this._videoMode   = true;
         this._videoKey    = key;
+        this._invalidateCacheBar();   // different clip -> different buffered ranges
         this._videoFps    = (imgObj.fps && imgObj.fps > 0) ? imgObj.fps : (this.fps || 24);
         this._videoFrames = (imgObj.frames && imgObj.frames > 0) ? imgObj.frames : 0;
 
@@ -466,9 +787,13 @@ export const PlaybackMixin = {
             v.addEventListener("timeupdate",     () => this._videoOnTimeUpdate());
             v.addEventListener("loadedmetadata", () => this._videoOnMeta());
             v.addEventListener("ended",          () => this._videoOnEnded());
+            // `progress` is how the browser reports buffering advancing — the only
+            // signal that grows the green bar while a clip downloads.
+            v.addEventListener("progress",       () => this.updateCacheBar());
+            v.addEventListener("suspend",        () => this.updateCacheBar());
             this._videoHandlersBound = true;
         }
-        if (v.src !== url) v.src = url;
+        this._setVideoSrc(v, url);
         this._applyVideoPlaybackRate();
 
         this.updateTransform();
@@ -486,10 +811,12 @@ export const PlaybackMixin = {
         this._videoMode = false;
         this._videoKey  = null;
         this._videoFrames = 0;
+        this._invalidateCacheBar();
         const v = this.videoBase;
         if (v) {
             try { v.pause(); } catch (e) {}
             v.removeAttribute("src");
+            v.dataset.srcKey = "";      // cancels any in-flight RAM-cache swap
             try { v.load(); } catch (e) {}
             v.style.display = "none";
         }
@@ -526,7 +853,9 @@ export const PlaybackMixin = {
             this._videoFrames = Math.max(1, Math.round((v.duration || 0) * (this._videoFps || 24)));
         }
         this.applyTimelineBounds(this._videoFrames);
-        this.fitView();
+        // A RAM-cache swap re-fires loadedmetadata for the clip already on screen;
+        // re-fitting there would yank the user's zoom/pan back mid-playback.
+        if (!v._bepicRamSwap) this.fitView();
         this._applyVideoPlaybackRate();
         if (this.timeline) this.timeline.value = this.currentFrame || 0;
         // The base video's decoded size is known only now. The compare aspect-match
@@ -568,6 +897,7 @@ export const PlaybackMixin = {
         if (this.timeline) this.timeline.value = frame;
         const curEl = this.container && this.container.querySelector("#cur-f");
         if (curEl) curEl.innerText = frame;
+        this.updateCacheBar();
         // Native <video> playback doesn't go through setFrame, so advance the
         // compare overlay here to keep the wipe in sync while the video plays.
         this._updateCompareFrame(frame);

@@ -13,7 +13,14 @@ except Exception:  # pragma: no cover - viewer still works without the resolver
 
 def _file_response(path):
     """Serve an image/video file, swapping in a browser-renderable PNG proxy for
-    formats an <img> can't decode (exr / tiff / dpx / ...)."""
+    formats an <img> can't decode (exr / tiff / dpx / ...).
+
+    `no-cache` lets the browser keep the bytes but forces it to revalidate before
+    reusing them, so an overwritten file is picked up immediately (via the ETag
+    aiohttp already sends) while unchanged frames cost a 304 instead of a full
+    re-download. That is what lets the viewer drop the per-request cache-buster
+    it used to append, which was defeating its own frame-caching.
+    """
     if media_resolve is not None:
         try:
             proxy = media_resolve.proxy_for_display(path)
@@ -22,7 +29,7 @@ def _file_response(path):
         except Exception as e:
             print(f"[bEpicViewer] display proxy failed for {path}: {e}")
     from aiohttp import web
-    return web.FileResponse(path)
+    return web.FileResponse(path, headers={"Cache-Control": "no-cache"})
 
 try:
     from aiohttp import web

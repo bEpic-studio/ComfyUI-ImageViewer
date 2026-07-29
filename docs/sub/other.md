@@ -112,6 +112,8 @@ Every image received by bEpicSendToViewer nodes is saved as a temporary PNG in C
 3. Confirm to delete all `bEpic_*` temp files and wipe all history thumbnails.
 4. The viewer resets to an empty state (all tabs closed, history cleared).
 
+This also releases any video held in memory, since those clips were read from the temp files being deleted. A clip that is playing at the time is switched back to streaming first, so clearing never interrupts playback. See [RAM Cache Toggle](playback.md#ram-cache-toggle).
+
 ---
 
 ## Hotkey Help Overlay

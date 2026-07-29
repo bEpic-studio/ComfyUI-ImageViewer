@@ -34,6 +34,7 @@ export const HistoryMixin = {
                 this.isViewingHistory = false;
                 this.previewBackup = null;
                 this.historyCompare = null;
+                this._historyCompareEntered = false;
                 this.currentFrame = this.getTimelineBounds(processed.length).min;
             }
         }
@@ -66,45 +67,50 @@ export const HistoryMixin = {
         }
     },
 
-    // ── History image URL helper ─────────────────────────────────────────────
-
-    getHistoryImageUrl(key, idx) {
-        const snapshot = this.history[key] && this.history[key][idx];
-        if (!snapshot || snapshot.length === 0) return "";
-        try { return this.buildImgUrl(snapshot[0]); } catch (e) { return ""; }
-    },
-
     // ── History compare helpers ──────────────────────────────────────────────
 
+    // Pin two snapshots of one tab against each other. Both layers are fed from
+    // `historyCompare` by _baseFrames / _compareFrames, so this only has to put
+    // the viewer into compare mode and let the normal setFrame path load, scale
+    // and clip them — the same code that drives a two-tab compare, video
+    // snapshots included.
     enterHistoryCompare() {
         if (!this.historyCompare) return;
-        this._savedBaseSrc     = this.imgBase.src;
-        this._savedCompareSrc  = this.imgCompare.src;
-        this._savedComparing   = this.isComparing;
-        this._savedCompareTab  = this.compareTab;
-
-        const { key, baseIdx, otherIdx } = this.historyCompare;
-        const url1 = this.getHistoryImageUrl(key, baseIdx);
-        const url2 = this.getHistoryImageUrl(key, otherIdx);
+        // Only the first entry records what to restore. Re-pinning the second
+        // snapshot calls straight back in here, and without this guard it would
+        // overwrite the saved state with the compare mode we just switched on —
+        // leaving compare stuck on after exiting.
+        if (!this._historyCompareEntered) {
+            this._historyCompareEntered = true;
+            this._savedComparing  = this.isComparing;
+            this._savedCompareTab = this.compareTab;
+        }
+        // The compare layer belongs to the snapshot now, not to a tab.
+        this.compareTab = null;
 
         if (!this.isComparing) {
-            this.toggleCompare();
-            this.compareTab = this._savedCompareTab;
-            this.updateTabHighlights();
+            this.toggleCompare();          // ends in setFrame + updateTransform
+        } else {
+            this.setFrame(this.currentFrame);
+            this.updateTransform();
         }
-        this.imgBase.src    = url1;
-        this.imgCompare.src = url2;
-        this.updateCompareVisuals();
+        this.updateTabHighlights();
         this.renderHistoryPanel();
     },
 
     exitHistoryCompare() {
         if (!this.historyCompare) return;
         this.historyCompare = null;
-        if (this._savedBaseSrc    !== undefined) this.imgBase.src    = this._savedBaseSrc;
-        if (this._savedCompareSrc !== undefined) this.imgCompare.src = this._savedCompareSrc;
-        if (!this._savedComparing && this.isComparing) this.toggleCompare();
-        if (this._savedComparing) this.compareTab = this._savedCompareTab;
+        this._historyCompareEntered = false;
+        this.compareTab = this._savedComparing ? this._savedCompareTab : null;
+        if (!this._savedComparing && this.isComparing) {
+            this.toggleCompare();
+        } else {
+            // Rebuild both layers from the live tab now that the snapshots are
+            // no longer the source.
+            this.refreshView();
+            this.updateTransform();
+        }
         this.updateTabHighlights();
         this.renderHistoryPanel();
     },
@@ -177,6 +183,10 @@ export const HistoryMixin = {
                     return;
                 }
 
+                // Unpin first so toggleCompare acts on tab state rather than on
+                // the snapshot compare we are leaving (exitHistoryCompare already
+                // turns compare off when it wasn't on beforehand).
+                if (this.historyCompare) this.exitHistoryCompare();
                 if (this.isComparing) this.toggleCompare();
 
                 if (this.isViewingHistory && this.currentHistoryKey === key && this.currentHistoryIndex === idx) {

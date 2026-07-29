@@ -234,6 +234,12 @@ export const UIMixin = {
                 const js = await res.json();
                 dlgWin.alert(`Cleared ${js.deleted || 0} files from bEpic temp cache.`);
                 try {
+                    // The RAM-cached clips were read from the temp files that just
+                    // got deleted, so drop them too rather than keep serving copies
+                    // of files the user asked to clear. Goes through _releaseVideoRam
+                    // so a clip playing from a blob is re-pointed at its URL before
+                    // that blob is revoked out from under it.
+                    this._releaseVideoRam();
                     this.history        = {};
                     this.previewBackup  = null;
                     this.isViewingHistory = false;
@@ -596,7 +602,9 @@ export const UIMixin = {
     toggleCompare() {
         this.isComparing = !this.isComparing;
         if (this.isComparing) {
-            if (!this.compareTab) {
+            // A history-snapshot compare supplies its own second image, so don't
+            // grab an unrelated tab as the compare source underneath it.
+            if (!this.compareTab && !this.historyCompare) {
                 const candidates = Object.keys(this.allTabs).filter(k => k !== this.activeTab);
                 if (candidates.length > 0) this.compareTab = candidates[0];
             }
@@ -607,8 +615,12 @@ export const UIMixin = {
             Object.assign(this.slider.style, { top: '0', bottom: '0', left: '', right: '', width: '2px', height: 'auto', display: 'block' });
             this.viewport.classList.remove('contact-mode');
             if (this.contactContainer) { this.contactContainer.style.transform = ''; this.contactContainer.style.width = ''; this.contactContainer.style.height = ''; }
-            this.updateCompareVisuals();
             this.setFrame(this.currentFrame);
+            // The compare layer carries the shared zoom/pan plus its aspect-match
+            // scale. Without this it keeps whatever transform it had when compare
+            // was last off — usually none — and renders at the wrong size.
+            this.updateTransform();
+            this.updateCompareVisuals();
         } else {
             this.rotateBtn.style.display          = "none";
             this.imgCompare.style.display         = "none";
@@ -661,9 +673,12 @@ export const UIMixin = {
             }
         }
         this.applyContactClass();
-        this.updateCompareVisuals();
+        // Transform first: switching seam orientation changes which axis the
+        // compare layer is scaled to match, and the wipe seam is measured against
+        // the compare layer's resulting on-screen box.
         this.updateTransform();
         this.fitView();
+        this.updateCompareVisuals();
         // Re-resolve which compare layer shows (img vs video) and re-seek it.
         if (this.isComparing) this._updateCompareFrame(this.currentFrame);
     },
@@ -687,9 +702,13 @@ export const UIMixin = {
         if (this.videoCompare) { this.videoCompare.style.width = ''; this.videoCompare.style.height = ''; }
     },
 
-    // Is the compare tab a video (routed to the compare <video> instead of <img>)?
+    // Is the compare source a video (routed to the compare <video> instead of the
+    // <img>)? Reads _compareFrames so it is right for a history-snapshot compare
+    // too, not just a compare tab — measuring the wrong (hidden) element here
+    // yields a zero-sized rect and a clip-path that hides the compare layer.
     _compareIsVideo() {
-        const c = this.isComparing && this.compareTab && this.allTabs[this.compareTab];
+        if (!this.isComparing) return false;
+        const c = this._compareFrames ? this._compareFrames() : null;
         return !!(c && c.length && this._frameIsVideo && this._frameIsVideo(c[0]));
     },
 
@@ -720,25 +739,30 @@ export const UIMixin = {
 
     // Base and compare each get object-fit:contain against the same box, so media
     // with different aspect ratios render at different sizes. This returns the
-    // extra uniform scale that makes the compare frame's on-screen HEIGHT match
-    // the base frame's height, so different-resolution sources line up by height
-    // in the wipe/split modes. It is exactly 1 when the two render at the same
-    // height (e.g. matching aspect ratios), so equal-format compares are unaffected.
+    // extra uniform scale that lines the compare frame up with the base along the
+    // axis the wipe actually runs across:
+    //
+    //   vertical seam   → slides left/right → match rendered HEIGHTS, so the top
+    //                     and bottom edges of both frames coincide
+    //   horizontal seam → slides up/down    → match rendered WIDTHS, so the left
+    //                     and right edges coincide
+    //
+    // Matching the wrong axis leaves the two clips at visibly different sizes as
+    // the seam crosses them. It is exactly 1 when both already render at the same
+    // size on that axis, so same-resolution compares are unaffected.
     _compareExtraScale() {
-        if (!this.isComparing) return 1;
+        if (!this.isComparing || this.sliderMode === 'contact') return 1;
         // Base decoded size (a video base hides imgBase, so read the <video>).
-        const base  = this._baseMediaSize();
-        const baseW = base.w, baseH = base.h;
-        const cmp   = this._compareMediaSize();
-        if (!baseW || !baseH || !cmp.w || !cmp.h) return 1;
+        const base = this._baseMediaSize();
+        const cmp  = this._compareMediaSize();
+        if (!base.w || !base.h || !cmp.w || !cmp.h) return 1;
         const box = this.viewport.getBoundingClientRect();
         if (!box.width || !box.height) return 1;
-        const bScale = Math.min(box.width / baseW, box.height / baseH);
-        const cScale = Math.min(box.width / cmp.w, box.height / cmp.h);
-        const bH = baseH * bScale;
-        const cH = cmp.h * cScale;
-        if (!cH) return 1;
-        const s = bH / cH;   // match rendered heights
+        const bScale = Math.min(box.width / base.w, box.height / base.h);
+        const cScale = Math.min(box.width / cmp.w,  box.height / cmp.h);
+        const s = (this.sliderMode === 'horizontal')
+            ? (base.w * bScale) / (cmp.w * cScale)
+            : (base.h * bScale) / (cmp.h * cScale);
         return (Number.isFinite(s) && s > 0) ? s : 1;
     },
 
@@ -871,8 +895,10 @@ export const UIMixin = {
     // ── Transform / zoom ─────────────────────────────────────────────────────
 
     updateTransform() {
-        // Skip no-op updates to reduce style invalidation
-        const sig = `${this.panX},${this.panY},${this.zoom},${this.sliderMode}`;
+        // Skip no-op updates to reduce style invalidation. isComparing is part of
+        // the signature because entering compare has to push a transform onto the
+        // compare layer even when zoom/pan haven't moved.
+        const sig = `${this.panX},${this.panY},${this.zoom},${this.sliderMode},${this.isComparing}`;
         if (sig === this._lastTransformSig) return;
         this._lastTransformSig = sig;
 

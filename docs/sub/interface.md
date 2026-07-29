@@ -74,8 +74,10 @@ The bottom bar contains (left to right):
 | ▷ Step Forward | Advance one frame |
 | ⏭ End | Jump to last frame |
 | Timeline slider | Scrub to any frame; <kbd>Ctrl</kbd>+drag to set a sub-range |
+| Green bar on the timeline | Which frames are held locally — see [Playback Controls](playback.md#video-playback) |
 | FPS input | Set playback speed (default 25 fps) |
 | Loop mode | Loop / Ping-Pong / Once |
+| RAM cache toggle | Keep video in memory for smooth playback (on by default) |
 | Toolbar icons | Shape toggle, Clear Cache, Open Folder, Layouts, Undock, Help |
 
 ## Resizing & Moving the Panel
