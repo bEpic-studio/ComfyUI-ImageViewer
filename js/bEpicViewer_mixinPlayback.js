@@ -21,6 +21,29 @@ const _videoRamPending = new Map();   // url -> in-flight fetch promise
 // it lands so a clip the user just dropped isn't quietly cached again.
 const _videoRamAbandoned = new Set();
 
+// Revoking a blob: URL only drops the NAME. A <video> that already loaded from it
+// keeps the data alive, so freeing memory means handing that element back its
+// streaming URL first — otherwise the cache reports the clip as gone while the
+// bytes are still resident, which is what made purging look like it did nothing.
+// Panels register how to do that here, so every revoke path (eviction, purge,
+// targeted drop, Clear Cache) goes through the same step.
+const _detachHooks = new Set();
+
+export function registerVideoDetachHook(fn) {
+    _detachHooks.add(fn);
+    return () => _detachHooks.delete(fn);
+}
+
+function _detachBlob(blobUrl) {
+    for (const fn of _detachHooks) { try { fn(blobUrl); } catch (e) {} }
+}
+
+function _revokeEntry(entry) {
+    if (!entry) return;
+    _detachBlob(entry.blobUrl);
+    try { URL.revokeObjectURL(entry.blobUrl); } catch (e) {}
+}
+
 function _videoRamGet(url) {
     const hit = _videoRam.get(url);
     if (!hit) return null;
@@ -29,13 +52,15 @@ function _videoRamGet(url) {
     return hit.blobUrl;
 }
 
-// Drop least-recently-used clips until the cache is back inside its budget.
+// Drop least-recently-used clips until the cache is back inside its budget. The
+// LRU entry can be the one on screen, so this has to go through _revokeEntry or
+// the budget becomes fiction: the map shrinks and the memory stays.
 function _videoRamEvict() {
     let total = 0;
     for (const entry of _videoRam.values()) total += entry.bytes;
     for (const [url, entry] of _videoRam) {
         if (total <= VIDEO_RAM_BUDGET) break;
-        try { URL.revokeObjectURL(entry.blobUrl); } catch (e) {}
+        _revokeEntry(entry);
         _videoRam.delete(url);
         total -= entry.bytes;
     }
@@ -86,9 +111,7 @@ function _markFrameLoaded(url) {
 // these blobs were read from.
 export function clearVideoRamCache() {
     for (const url of _videoRamPending.keys()) _videoRamAbandoned.add(url);
-    for (const entry of _videoRam.values()) {
-        try { URL.revokeObjectURL(entry.blobUrl); } catch (e) {}
-    }
+    for (const entry of _videoRam.values()) _revokeEntry(entry);
     _videoRam.clear();
     _videoRamPending.clear();
     _loadedFrameUrls.clear();
@@ -112,7 +135,7 @@ export function dropVideoRamUrls(urls) {
     for (const url of urls) {
         const hit = _videoRam.get(url);
         if (hit) {
-            try { URL.revokeObjectURL(hit.blobUrl); } catch (e) {}
+            _revokeEntry(hit);
             _videoRam.delete(url);
             bytes += hit.bytes;
             clips++;
@@ -161,12 +184,23 @@ export const PlaybackMixin = {
     // starts instantly and turns smooth rather than stalling on a full download.
     _setVideoSrc(v, url) {
         if (!v || !url) return;
+        // Bound here rather than at setup so it is impossible for this panel to be
+        // holding a cached clip the cache can't hand back before revoking it.
+        this._bindVideoDetachHook();
         v.dataset.srcKey = url;
-        v.preload = "auto";
 
         // Caching turned off in the toolbar — always stream. (Read through the
         // accessor so a panel that never loaded the preference still defaults on.)
-        if (!this.isVideoRamCacheEnabled()) { if (v.src !== url) v.src = url; return; }
+        if (!this.isVideoRamCacheEnabled()) {
+            // preload="auto" tells the browser to pull the whole file into ITS
+            // memory, which is the thing the toggle is supposed to stop. Asking
+            // for metadata only is what actually keeps a clip out of RAM; the
+            // cost is the range requests that caching exists to avoid.
+            v.preload = "metadata";
+            if (v.src !== url) v.src = url;
+            return;
+        }
+        v.preload = "auto";
 
         const cached = _videoRamGet(url);
         if (cached) { if (v.src !== cached) v.src = cached; return; }
@@ -256,7 +290,15 @@ export const PlaybackMixin = {
         this._syncRamCacheButton();
 
         if (!this.videoRamCacheEnabled) {
+            const before = videoRamStats();
+            // Stop the browser pre-buffering the clips that are already loaded —
+            // dropping our copy while it keeps slurping the whole file into its own
+            // buffer is why turning this off looked like it changed nothing.
+            [this.videoBase, this.videoCompare].forEach((v) => { if (v) v.preload = "metadata"; });
             this._releaseVideoRam();
+            this._notify(before.clips
+                ? `Video RAM cache off — ${this._formatRamBytes(before.bytes)} released`
+                : "Video RAM cache off — clips now stream from the server");
         } else {
             // Re-run the source setup for whatever is on screen so the current
             // clips get pulled into RAM straight away instead of only the next one.
@@ -270,16 +312,43 @@ export const PlaybackMixin = {
         this.updateCacheBar();
     },
 
-    // Hand the memory back. Anything currently playing from a blob has to be
-    // pointed at its streaming URL FIRST — revoking the blob under a live
-    // <video> would drop its source mid-playback.
+    // Hand the memory back. The cache re-points any live <video> off a blob before
+    // revoking it, through the detach hook registered below, so this is just the
+    // clear — and so eviction and targeted drops get the same protection.
     _releaseVideoRam() {
-        [this.videoBase, this.videoCompare].forEach((v) => {
-            if (!v || !v.dataset || !v.dataset.srcKey) return;
-            if (!/^blob:/.test(v.src || "")) return;
-            this._reSourceVideo(v, v.dataset.srcKey);
-        });
         clearVideoRamCache();
+    },
+
+    // Called by the cache for each blob about to be revoked. A <video> still
+    // holding that blob keeps its bytes alive, so it has to be handed back its
+    // streaming URL — and told not to immediately re-buffer the whole file, which
+    // would put back the memory the purge just reclaimed.
+    _detachFromBlob(blobUrl) {
+        [this.videoBase, this.videoCompare].forEach((v) => {
+            if (!v || v.src !== blobUrl) return;
+            const stream = v.dataset && v.dataset.srcKey;
+            if (!stream || stream === blobUrl) return;
+            v.preload = "metadata";
+            this._reSourceVideo(v, stream);
+        });
+    },
+
+    _bindVideoDetachHook() {
+        if (this._videoDetachUnhook) return;
+        this._videoDetachUnhook = registerVideoDetachHook((blobUrl) => this._detachFromBlob(blobUrl));
+    },
+
+    // Short confirmation for actions whose whole point is the thing you can't see.
+    // ComfyUI's toast when it's reachable, the console otherwise.
+    _notify(text) {
+        try {
+            const toast = app && app.extensionManager && app.extensionManager.toast;
+            if (toast && typeof toast.add === "function") {
+                toast.add({ severity: "success", summary: "bEpic Viewer", detail: text, life: 2500 });
+                return;
+            }
+        } catch (e) {}
+        console.info(`[bEpicViewer] ${text}`);
     },
 
     // ── Purging the RAM cache ─────────────────────────────────────────────────
@@ -303,9 +372,9 @@ export const PlaybackMixin = {
         this._invalidateCacheBar();
         this.updateCacheBar();
         this._syncRamCacheButton();
-        console.info(before.clips
-            ? `[bEpicViewer] Purged ${before.clips} cached clip(s), ${this._formatRamBytes(before.bytes)} freed.`
-            : `[bEpicViewer] RAM clip cache was already empty.`);
+        this._notify(before.clips
+            ? `Purged ${before.clips} clip${before.clips === 1 ? "" : "s"} — ${this._formatRamBytes(before.bytes)} freed`
+            : "Nothing was cached — no video memory to free");
         return before;
     },
 
@@ -348,16 +417,9 @@ export const PlaybackMixin = {
 
     _dropRamForUrls(urls) {
         if (!urls || urls.length === 0) return { clips: 0, bytes: 0, frames: 0 };
-        const wanted = new Set(urls);
-        // Same rule as a full release: re-point a clip that is playing from one of
-        // these blobs before the blob is revoked.
-        [this.videoBase, this.videoCompare].forEach((v) => {
-            if (!v || !v.dataset || !v.dataset.srcKey) return;
-            if (!wanted.has(v.dataset.srcKey)) return;
-            if (!/^blob:/.test(v.src || "")) return;
-            this._reSourceVideo(v, v.dataset.srcKey);
-        });
-        const freed = dropVideoRamUrls(wanted);
+        // A clip playing from one of these blobs is re-pointed by the detach hook
+        // before its blob is revoked, so nothing here has to guard for that.
+        const freed = dropVideoRamUrls(new Set(urls));
         if (freed.clips || freed.frames) {
             this._invalidateCacheBar();
             this.updateCacheBar();

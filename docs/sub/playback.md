@@ -56,11 +56,16 @@ The **memory-stick** button in the playback toolbar turns the cache on and off. 
 
 Turn it off when you would rather keep the memory than the smoothness — reviewing very large clips, or working alongside something else that needs the RAM. Switching it off releases everything held immediately, without interrupting whatever is playing; switching it back on pulls the clip on screen into memory straight away rather than waiting for the next one.
 
+Off also stops the **browser** buffering whole clips of its own accord: clips are then loaded metadata-first and read in pieces as they play. That is the memory you were trying not to spend, so it is the point — but it also means scrubbing a streamed clip goes back to the server, which is exactly what caching exists to avoid.
+
 ### Purge RAM
 
-The **memory-stick with an ✕** button next to it empties the cache without turning caching off — the next clip you play is cached again as usual. Hover it to see what is resident right now (`3 clips, 240 MB of 1.50 GB`); it sits dimmed when there is nothing to purge.
+The **memory-stick with an ✕** button next to it empties the cache without turning caching off — the next clip you load is cached again as usual. Hover it to see what is resident right now (`3 clips, 240 MB of 1.50 GB`); it sits dimmed when there is nothing to purge. A short confirmation reports what was freed, so a purge that finds nothing cached says so rather than looking broken.
 
-Purging never interrupts playback: a clip playing from memory is pointed back at its streaming URL first, keeping its position and play state. The green [cached-frame bar](#cached-frame-bar) resetting is the visible confirmation.
+Purging never interrupts playback: a clip playing from memory is pointed back at its streaming URL first, keeping its position and play state. It then keeps streaming rather than immediately re-reading the whole file — otherwise the memory would come straight back — so the clip on screen stays out of RAM until you load another one.
+
+> [!NOTE]
+> If the purge reports nothing cached while your browser is still holding gigabytes, the memory is not this cache. Decoded image sequences live in the browser's own image cache, which no extension can hand back — reloading the page (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>) is what clears that.
 
 ### Clips Released Automatically
 
