@@ -31,6 +31,12 @@ _FILE_FORMATS = file_writer.FILE_FORMATS if file_writer is not None else [
     "png", "exr", "tiff", "jpg", "mp4", "mov", "webm"]
 _DEFAULT_FORMAT = "png" if "png" in _FILE_FORMATS else _FILE_FORMATS[0]
 
+# Which of those formats are actually encoded as video. Carried on the fps input
+# spec below so the JS can hide fps for a still-image format without keeping its
+# own copy of this list — it reads it out of /object_info, which ships INPUT_TYPES
+# verbatim. See videoFormatsFromDef / bepicSyncOutputWidgets.
+_VIDEO_FORMATS = file_writer.VIDEO_EXTS if file_writer is not None else ["mp4", "mov", "webm"]
+
 
 def _dims_from_input(inp):
     """Return (N, H, W) from a ComfyUI IMAGE [B,H,W,C] / MASK [B,H,W] tensor, or
@@ -151,8 +157,12 @@ class bEpicSendToViewer:
                 # below while this is off.
                 "save_to_output": ("BOOLEAN", {"default": False}),
                 "file_format": (_FILE_FORMATS, {"default": _DEFAULT_FORMAT}),
+                # Only reaches an encoder when file_format is a video container;
+                # the JS hides it for still-image formats, driven by the format
+                # list carried here.
                 "fps": ("FLOAT", {"default": 24.0, "min": 0.01, "max": 1000.0,
-                                  "step": 0.01}),
+                                  "step": 0.01,
+                                  "bepic_video_formats": _VIDEO_FORMATS}),
                 "filename_prefix": ("STRING", {"default": "bEpic"}),
             },
             "optional": {

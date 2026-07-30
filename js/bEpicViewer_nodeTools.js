@@ -27,7 +27,35 @@ export const SAM3_BOX_NEG_WIDGET = "sam3_box_negative";
 
 // "save to ./output" toggle and the config widgets it shows/hides.
 export const OUTPUT_TOGGLE = "save_to_output";
-export const OUTPUT_CFG_WIDGETS = ["file_format", "fps", "filename_prefix"];
+export const FORMAT_WIDGET = "file_format";
+export const FPS_WIDGET    = "fps";
+export const OUTPUT_CFG_WIDGETS = [FORMAT_WIDGET, FPS_WIDGET, "filename_prefix"];
+
+// Which file_format values are encoded as video. The real list is
+// file_writer.VIDEO_EXTS, carried on the fps input spec in INPUT_TYPES, so
+// adding a container backend-side needs no change here; this literal only covers
+// a frontend talking to a server too old to send it.
+const VIDEO_FORMATS_FALLBACK = ["mp4", "mov", "webm"];
+
+// Read it off the node DEFINITION rather than the built widget: /object_info
+// ships INPUT_TYPES verbatim, whereas the frontend rebuilds widget.options from
+// a fixed set of keys (min/max/step/precision) and drops anything else.
+function videoFormatsFromDef(nodeData) {
+    const req  = nodeData && nodeData.input && nodeData.input.required;
+    const spec = req && req.fps;
+    const list = Array.isArray(spec) && spec[1] ? spec[1].bepic_video_formats : null;
+    return (Array.isArray(list) && list.length) ? list : VIDEO_FORMATS_FALLBACK;
+}
+
+const normExt = (v) => String(v || "").toLowerCase().replace(/^\./, "");
+
+export function isVideoFormat(node, format) {
+    const list = (node && Array.isArray(node._bepicVideoFormats))
+        ? node._bepicVideoFormats
+        : VIDEO_FORMATS_FALLBACK;
+    const ext = normExt(format);
+    return ext !== "" && list.some(v => normExt(v) === ext);
+}
 
 // Fully hide a widget while keeping it serializable (values still reach backend).
 function hideWidget(node, widget) {
@@ -155,15 +183,32 @@ function ensureOutputsAtLeast(node, count) {
     node.setDirtyCanvas?.(true, true);
 }
 
+// Re-run the widget-visibility sync after a widget's own callback. Wrapped once
+// per node — litegraph replaces the callback wholesale, so chaining to whatever
+// was there keeps the frontend's own handling intact.
+function resyncOnChange(node, widgetName) {
+    const w = getToolWidget(node, widgetName);
+    if (!w || w._bepicResyncBound) return;
+    w._bepicResyncBound = true;
+    const origCb = w.callback;
+    w.callback = function () {
+        const cr = origCb ? origCb.apply(this, arguments) : undefined;
+        node.bepicSyncOutputWidgets();
+        return cr;
+    };
+}
+
 // Register the node-side behaviour. Call from beforeRegisterNodeDef.
 export function registerSendNode(nodeType, nodeData) {
     const specs = outputSpecsFromDef(nodeData);
+    const videoFormats = videoFormatsFromDef(nodeData);
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
         const r = onNodeCreated?.apply(this, arguments);
 
         this._bepicOutputSpecs = specs;
+        this._bepicVideoFormats = videoFormats;
         // Collapse to just the image output; optional slots appear on demand.
         if (Array.isArray(this.outputs)) {
             for (let i = this.outputs.length - 1; i >= 1; i--) this.removeOutput(i);
@@ -177,28 +222,27 @@ export function registerSendNode(nodeType, nodeData) {
         hideWidget(this, getToolWidget(this, SAM3_BOX_POS_WIDGET));
         hideWidget(this, getToolWidget(this, SAM3_BOX_NEG_WIDGET));
 
-        // Re-sync the save-to-output config widgets whenever the toggle flips.
-        const toggle = getToolWidget(this, OUTPUT_TOGGLE);
-        if (toggle) {
-            const node = this;
-            const origCb = toggle.callback;
-            toggle.callback = function () {
-                const cr = origCb ? origCb.apply(this, arguments) : undefined;
-                node.bepicSyncOutputWidgets();
-                return cr;
-            };
-        }
+        // Re-sync the save-to-output config widgets whenever the toggle flips —
+        // and whenever the format changes, since that decides whether fps means
+        // anything.
+        resyncOnChange(this, OUTPUT_TOGGLE);
+        resyncOnChange(this, FORMAT_WIDGET);
         this.bepicSyncOutputWidgets();
 
         return r;
     };
 
     // Show file_format / fps / filename_prefix only while save_to_output is on,
-    // then reflow the node to the new widget layout.
+    // then reflow the node to the new widget layout. fps is narrower still: it
+    // sets the encoder's frame rate, so a still-image format has nothing for it
+    // to do and it stays hidden there.
     nodeType.prototype.bepicSyncOutputWidgets = function () {
         const toggle = getToolWidget(this, OUTPUT_TOGGLE);
-        const show = !!(toggle && toggle.value);
+        const saving = !!(toggle && toggle.value);
+        const fmt    = getToolWidget(this, FORMAT_WIDGET);
+        const showFps = saving && isVideoFormat(this, fmt && fmt.value);
         for (const name of OUTPUT_CFG_WIDGETS) {
+            const show = (name === FPS_WIDGET) ? showFps : saving;
             setWidgetVisible(this, getToolWidget(this, name), show);
         }
         const sz = this.computeSize();
@@ -221,6 +265,7 @@ export function registerSendNode(nodeType, nodeData) {
     nodeType.prototype.onConfigure = function (info) {
         const r = onConfigure?.apply(this, arguments);
         this._bepicOutputSpecs = specs;
+        this._bepicVideoFormats = videoFormats;
         // Old workflows saved the node with no outputs — make sure `image` is
         // present so the passthrough is always wirable.
         if (!Array.isArray(this.outputs) || this.outputs.length === 0) {
@@ -231,6 +276,10 @@ export function registerSendNode(nodeType, nodeData) {
         hideWidget(this, getToolWidget(this, SAM3_NEG_WIDGET));
         hideWidget(this, getToolWidget(this, SAM3_BOX_POS_WIDGET));
         hideWidget(this, getToolWidget(this, SAM3_BOX_NEG_WIDGET));
+        // Idempotent — a node restored from a workflow may or may not have gone
+        // through onNodeCreated first, depending on the frontend version.
+        resyncOnChange(this, OUTPUT_TOGGLE);
+        resyncOnChange(this, FORMAT_WIDGET);
         this.bepicSyncToolOutputs?.();
         this.bepicSyncOutputWidgets?.();
         return r;
