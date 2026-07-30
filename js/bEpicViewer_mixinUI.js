@@ -645,6 +645,7 @@ export const UIMixin = {
             // was last off — usually none — and renders at the wrong size.
             this.updateTransform();
             this.updateCompareVisuals();
+            this._scheduleCompareSync();
         } else {
             this.rotateBtn.style.display          = "none";
             this.imgCompare.style.display         = "none";
@@ -705,6 +706,7 @@ export const UIMixin = {
         this.updateCompareVisuals();
         // Re-resolve which compare layer shows (img vs video) and re-seek it.
         if (this.isComparing) this._updateCompareFrame(this.currentFrame);
+        this._scheduleCompareSync();
     },
 
     applyContactClass() {
@@ -814,6 +816,23 @@ export const UIMixin = {
         if (this.sliderMode === 'contact') this.resizeContactContainer();
         this._applyCompareTransform();
         this.updateCompareVisuals();
+    },
+
+    // Same thing, once more after the browser has laid the frame out. Entering
+    // compare and switching seam orientation both derive the layout from whatever
+    // is measurable at that instant, and everything else here is driven by media
+    // events; this covers the case where the sizes were readable but no event was
+    // left to hang the re-derive on. It rewrites the identical transform when
+    // nothing changed, so it costs one rAF and is otherwise invisible.
+    _scheduleCompareSync() {
+        if (this._compareSyncRaf) return;
+        const view = (this.ownerDocument && this.ownerDocument.defaultView) ||
+                     (typeof window !== "undefined" ? window : null);
+        if (!view || !view.requestAnimationFrame) { this._syncCompareLayout(); return; }
+        this._compareSyncRaf = view.requestAnimationFrame(() => {
+            this._compareSyncRaf = null;
+            this._syncCompareLayout();
+        });
     },
 
     getContactLayout() {

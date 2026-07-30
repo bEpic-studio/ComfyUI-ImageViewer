@@ -17,6 +17,9 @@ const RAM_CACHE_PREF_KEY = "bEpicViewer:ramCache:v1";
 
 const _videoRam        = new Map();   // url -> {blobUrl, bytes}; insertion order = LRU
 const _videoRamPending = new Map();   // url -> in-flight fetch promise
+// Clips purged while their download was still running. The job checks this when
+// it lands so a clip the user just dropped isn't quietly cached again.
+const _videoRamAbandoned = new Set();
 
 function _videoRamGet(url) {
     const hit = _videoRam.get(url);
@@ -49,6 +52,12 @@ function _videoRamFetch(url) {
         const blob = await res.blob();
         if (blob.size > VIDEO_RAM_MAX_FILE) throw new Error("clip too large to cache");
         const blobUrl = URL.createObjectURL(blob);
+        // Purged mid-download: hand the memory straight back rather than filling
+        // the cache the user just emptied.
+        if (_videoRamAbandoned.delete(url)) {
+            try { URL.revokeObjectURL(blobUrl); } catch (e) {}
+            throw new Error("clip purged while downloading");
+        }
         _videoRam.set(url, { blobUrl, bytes: blob.size });
         _videoRamEvict();
         return blobUrl;
@@ -76,6 +85,7 @@ function _markFrameLoaded(url) {
 // Release every cached clip. Called by Clear Cache, which deletes the temp files
 // these blobs were read from.
 export function clearVideoRamCache() {
+    for (const url of _videoRamPending.keys()) _videoRamAbandoned.add(url);
     for (const entry of _videoRam.values()) {
         try { URL.revokeObjectURL(entry.blobUrl); } catch (e) {}
     }
@@ -83,6 +93,35 @@ export function clearVideoRamCache() {
     _videoRamPending.clear();
     _loadedFrameUrls.clear();
     _loadedEpoch++;          // invalidates every timeline's cached-frame scan
+}
+
+// How much memory the clip cache is holding, for the purge button's label.
+export function videoRamStats() {
+    let bytes = 0;
+    for (const entry of _videoRam.values()) bytes += entry.bytes;
+    return { clips: _videoRam.size, bytes, budget: VIDEO_RAM_BUDGET };
+}
+
+// Release specific clips — the ones behind history entries or tabs that just went
+// away. Anything not cached is skipped, so passing image URLs (thumbnails, still
+// frames) simply drops them from the decoded-frames set that feeds the timeline's
+// green bar. Callers must re-point any live <video> off these blobs FIRST; see
+// _dropRamForUrls.
+export function dropVideoRamUrls(urls) {
+    let bytes = 0, clips = 0, frames = 0;
+    for (const url of urls) {
+        const hit = _videoRam.get(url);
+        if (hit) {
+            try { URL.revokeObjectURL(hit.blobUrl); } catch (e) {}
+            _videoRam.delete(url);
+            bytes += hit.bytes;
+            clips++;
+        }
+        if (_videoRamPending.has(url)) _videoRamAbandoned.add(url);
+        if (_loadedFrameUrls.delete(url)) frames++;
+    }
+    if (clips || frames) _loadedEpoch++;   // the cached-frame bar has to rescan
+    return { clips, bytes, frames };
 }
 
 export const PlaybackMixin = {
@@ -134,9 +173,11 @@ export const PlaybackMixin = {
 
         if (v.src !== url) v.src = url;
         _videoRamFetch(url).then((blobUrl) => {
+            if (!blobUrl) return;
+            this._syncPurgeRamButton();   // the cache just grew — keep the readout live
             // Bail if the element moved on to another clip, or caching was turned
             // off, while we were downloading.
-            if (!blobUrl || !this.isVideoRamCacheEnabled()) return;
+            if (!this.isVideoRamCacheEnabled()) return;
             if (v.dataset.srcKey !== url || v.src === blobUrl) return;
             this._reSourceVideo(v, blobUrl, () => {
                 // The blob wouldn't decode here (an undocked popout resolving a
@@ -185,12 +226,27 @@ export const PlaybackMixin = {
 
     _syncRamCacheButton() {
         const btn = this.ramCacheBtn;
+        if (btn) {
+            const on = this.isVideoRamCacheEnabled();
+            btn.classList.toggle("active", on);
+            btn.title = on
+                ? "Video RAM cache: on — clips play from memory (click to stream instead)"
+                : "Video RAM cache: off — clips stream from the server (click to cache in RAM)";
+        }
+        this._syncPurgeRamButton();
+    },
+
+    // The purge button doubles as the readout for how much is resident, so it is
+    // refreshed wherever the cache changes size.
+    _syncPurgeRamButton() {
+        const btn = this.purgeRamBtn;
         if (!btn) return;
-        const on = this.isVideoRamCacheEnabled();
-        btn.classList.toggle("active", on);
-        btn.title = on
-            ? "Video RAM cache: on — clips play from memory (click to stream instead)"
-            : "Video RAM cache: off — clips stream from the server (click to cache in RAM)";
+        const { clips, bytes, budget } = videoRamStats();
+        btn.classList.toggle("empty", clips === 0);
+        btn.title = clips === 0
+            ? "Purge video RAM cache — nothing cached right now"
+            : `Purge video RAM cache — ${clips} clip${clips === 1 ? "" : "s"}, ` +
+              `${this._formatRamBytes(bytes)} of ${this._formatRamBytes(budget)}`;
     },
 
     toggleVideoRamCache() {
@@ -224,6 +280,90 @@ export const PlaybackMixin = {
             this._reSourceVideo(v, v.dataset.srcKey);
         });
         clearVideoRamCache();
+    },
+
+    // ── Purging the RAM cache ─────────────────────────────────────────────────
+    // The cache holds whole clips, so a long session can accumulate more than the
+    // user wants resident even under the LRU budget. Two ways out: the toolbar's
+    // purge button (everything), and dropping a clip's copy when the history entry
+    // or tab that referenced it goes away.
+
+    videoRamUsage() { return videoRamStats(); },
+
+    _formatRamBytes(bytes) {
+        const mb = (bytes || 0) / (1024 * 1024);
+        if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+        return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+    },
+
+    // Toolbar button: drop every cached clip, keeping playback alive.
+    purgeVideoRam() {
+        const before = videoRamStats();
+        this._releaseVideoRam();
+        this._invalidateCacheBar();
+        this.updateCacheBar();
+        this._syncRamCacheButton();
+        console.info(before.clips
+            ? `[bEpicViewer] Purged ${before.clips} cached clip(s), ${this._formatRamBytes(before.bytes)} freed.`
+            : `[bEpicViewer] RAM clip cache was already empty.`);
+        return before;
+    },
+
+    // Every URL a frame array refers to, posters included — a video's thumbnail is
+    // a separate temp file and counts towards what the timeline reports as local.
+    _framesToUrls(frames) {
+        const out = [];
+        const push = (fr) => {
+            if (!fr) return;
+            if (Array.isArray(fr)) { fr.forEach(push); return; }   // a whole history stack
+            try { const u = this.buildImgUrl(fr); if (u) out.push(u); } catch (e) {}
+            if (fr.thumb && !/^(data:|blob:)/.test(fr.thumb)) {
+                try { out.push(this.buildImgUrl({ path: fr.thumb, type: "temp" })); } catch (e) {}
+            }
+        };
+        push(frames);
+        return out;
+    },
+
+    // Files still referenced by a tab, by a remaining history entry, or by the
+    // backup of a tab being previewed. Purging one of these would throw away a
+    // copy that is still in use, so they're excluded from a targeted drop.
+    _ramUrlsStillInUse() {
+        const keep = new Set();
+        const add  = (frames) => { for (const u of this._framesToUrls(frames)) keep.add(u); };
+        for (const key of Object.keys(this.allTabs || {})) add(this.allTabs[key]);
+        for (const key of Object.keys(this.history || {})) add(this.history[key]);
+        if (this.previewBackup) add(this.previewBackup);
+        return keep;
+    },
+
+    // Release the cached copies behind `frames`. Call it AFTER removing the entry
+    // from this.history / this.allTabs, so the in-use scan no longer sees it.
+    purgeRamForFrames(frames) {
+        const urls = this._framesToUrls(frames);
+        if (urls.length === 0) return { clips: 0, bytes: 0, frames: 0 };
+        const keep = this._ramUrlsStillInUse();
+        return this._dropRamForUrls(urls.filter(u => !keep.has(u)));
+    },
+
+    _dropRamForUrls(urls) {
+        if (!urls || urls.length === 0) return { clips: 0, bytes: 0, frames: 0 };
+        const wanted = new Set(urls);
+        // Same rule as a full release: re-point a clip that is playing from one of
+        // these blobs before the blob is revoked.
+        [this.videoBase, this.videoCompare].forEach((v) => {
+            if (!v || !v.dataset || !v.dataset.srcKey) return;
+            if (!wanted.has(v.dataset.srcKey)) return;
+            if (!/^blob:/.test(v.src || "")) return;
+            this._reSourceVideo(v, v.dataset.srcKey);
+        });
+        const freed = dropVideoRamUrls(wanted);
+        if (freed.clips || freed.frames) {
+            this._invalidateCacheBar();
+            this.updateCacheBar();
+            this._syncRamCacheButton();
+        }
+        return freed;
     },
 
     // Thumbnail URL for a frame. Video frames carry an extracted `thumb` PNG

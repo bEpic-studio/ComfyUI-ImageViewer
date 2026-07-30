@@ -335,13 +335,7 @@ export const SendFromNodeMixin = {
             if (frames.length === 0) return;
             const key = tabs.length > 1 ? `loader_${node.id}_${i}` : `loader_${node.id}`;
 
-            const stack = this.history[key] || (this.history[key] = []);
-            const json  = JSON.stringify(frames);
-            if (stack.length === 0 || JSON.stringify(stack[0]) !== json) {
-                stack.unshift(JSON.parse(json));
-                if (stack.length > 20) stack.pop();
-                this.onHistoryPrepended?.(key);
-            }
+            if (this.pushHistorySnapshot(key, frames)) this.onHistoryPrepended?.(key);
 
             this.allTabs[key]           = frames;
             this.tabLabels[key]         = this._nodeMediaLabel(tab);

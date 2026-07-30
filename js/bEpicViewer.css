@@ -35,6 +35,13 @@
 /* RAM cache off: dim it so the disabled state reads at a glance. */
 #ram-cache-btn { color: #666; }
 #ram-cache-btn > svg { stroke: #666; }
+/* Purge: dimmed further while there is nothing cached to purge. */
+#purge-ram-btn { color: #888; }
+#purge-ram-btn > svg { stroke: #888; }
+#purge-ram-btn.empty { color: #555; }
+#purge-ram-btn.empty > svg { stroke: #555; }
+#purge-ram-btn:hover { color: #f60; }
+#purge-ram-btn:hover > svg { stroke: #f60; }
 #refresh { color: #eee; }
 #refresh > svg { stroke: #eee; }
 #refresh.running { animation: spin 1s linear infinite; }

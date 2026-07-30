@@ -56,6 +56,25 @@ The **memory-stick** button in the playback toolbar turns the cache on and off. 
 
 Turn it off when you would rather keep the memory than the smoothness — reviewing very large clips, or working alongside something else that needs the RAM. Switching it off releases everything held immediately, without interrupting whatever is playing; switching it back on pulls the clip on screen into memory straight away rather than waiting for the next one.
 
+### Purge RAM
+
+The **memory-stick with an ✕** button next to it empties the cache without turning caching off — the next clip you play is cached again as usual. Hover it to see what is resident right now (`3 clips, 240 MB of 1.50 GB`); it sits dimmed when there is nothing to purge.
+
+Purging never interrupts playback: a clip playing from memory is pointed back at its streaming URL first, keeping its position and play state. The green [cached-frame bar](#cached-frame-bar) resetting is the visible confirmation.
+
+### Clips Released Automatically
+
+Cached clips are also handed back as soon as nothing refers to them, so a long session doesn't accumulate memory you can't see:
+
+| When | What is released |
+|---|---|
+| A history snapshot is removed (right-click → *Remove from history*) | That snapshot's clip |
+| A snapshot falls off the end of the 20-deep history stack | The evicted snapshot's clip |
+| **Clear History** (this tab, or all tabs) | Every clip those snapshots referenced |
+| A tab is closed, or its node is deleted | That tab's clip |
+
+A file that something else still points at — the live tab, or another snapshot — is always kept, so releasing memory can never cost you a clip you can still open. That means closing a tab whose history you kept releases nothing; use **Purge RAM** if you want the memory back regardless.
+
 ### Cached-Frame Bar
 
 A thin green bar along the top of the timeline shows which part of the current media is held locally and will therefore scrub and play without going back to the server.

@@ -589,8 +589,11 @@ export const AnnotateMixin = {
             name: saved.filename,
         };
         if (!this.history[key]) this.history[key] = [];
+        // Always a new entry (each save writes its own file), so this doesn't go
+        // through pushHistorySnapshot's de-dupe — but the cap still has to release
+        // whatever falls off the end.
         this.history[key].unshift([frame]);
-        if (this.history[key].length > 20) this.history[key].pop();
+        this.trimHistory(key);
 
         const panel = this.historyPanel || this.shadowRoot.getElementById("history-panel");
         if (panel) panel.style.display = "flex";

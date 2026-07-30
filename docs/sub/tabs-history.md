@@ -57,6 +57,8 @@ Right-click any thumbnail to open the context menu:
 | Copy Image Path | Copies the absolute file path of that snapshot to the clipboard |
 | Remove from History | Deletes that snapshot from the strip (does not delete the file on disk) |
 
+Removing a snapshot also releases the memory its video was cached in, unless the same file is still open in a tab or referenced by another snapshot — see [Clips Released Automatically](playback.md#clips-released-automatically).
+
 ### Clearing All History
 
 The **Clear Cache** button in the playback toolbar deletes all temporary bEpic files and wipes every tab's history. A confirmation dialog prevents accidental clearing.

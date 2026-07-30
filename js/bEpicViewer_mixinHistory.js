@@ -2,7 +2,34 @@
 // History panel: thumbnails, snapshots, folder loading, tab management.
 import { api } from "../../scripts/api.js";
 
+// Snapshots kept per tab. With clip caching on, this is also how many videos can
+// be held in RAM by history alone, so falling off the end has to release them.
+const HISTORY_LIMIT = 20;
+
 export const HistoryMixin = {
+
+    // ── History stack ────────────────────────────────────────────────────────
+
+    // Prepend a snapshot, skipping an exact repeat of the newest one. Returns
+    // whether anything was added. Every history push goes through here so the cap
+    // is applied — and paid for — in one place.
+    pushHistorySnapshot(key, snapshot) {
+        const stack = this.history[key] || (this.history[key] = []);
+        const json  = JSON.stringify(snapshot);
+        if (stack.length > 0 && JSON.stringify(stack[0]) === json) return false;
+        stack.unshift(JSON.parse(json));
+        this.trimHistory(key);
+        return true;
+    },
+
+    // Drop snapshots past the cap, releasing the RAM copy of each clip that goes
+    // with them. Without this the cache quietly grows to a 20-clip backlog per tab
+    // that nothing references any more.
+    trimHistory(key) {
+        const stack = this.history[key];
+        if (!Array.isArray(stack)) return;
+        while (stack.length > HISTORY_LIMIT) this.purgeRamForFrames(stack.pop());
+    },
 
     // ── Per-node image update + history push ────────────────────────────────
 
@@ -14,13 +41,7 @@ export const HistoryMixin = {
         }));
         let didPrepend = false;
         try {
-            if (!this.history[nodeId]) this.history[nodeId] = [];
-            const json = JSON.stringify(processed);
-            if (this.history[nodeId].length === 0 || JSON.stringify(this.history[nodeId][0]) !== json) {
-                this.history[nodeId].unshift(JSON.parse(json));
-                if (this.history[nodeId].length > 20) this.history[nodeId].pop();
-                didPrepend = true;
-            }
+            didPrepend = this.pushHistorySnapshot(nodeId, processed);
         } catch (e) { console.warn('bEpicViewer history push failed', e); }
 
         if (didPrepend) this.onHistoryPrepended(nodeId);
@@ -325,7 +346,12 @@ export const HistoryMixin = {
             this.restoreHistoryView();
         }
 
+        const removed = stack[index];
         stack.splice(index, 1);
+        // Hand back the RAM this snapshot's clip was held in. Runs after the splice
+        // so the in-use scan can't find the entry we just dropped — and it keeps
+        // anything a tab or another snapshot still points at.
+        this.purgeRamForFrames(removed);
 
         if (this.currentHistoryKey === key && Number.isInteger(this.currentHistoryIndex)) {
             if (this.currentHistoryIndex > index) {
@@ -472,9 +498,14 @@ export const HistoryMixin = {
     closeTab(key) {
         if (this._revokeDroppedTab) this._revokeDroppedTab(key);   // free blob: URLs of dropped files
         this.tabOrder = this.tabOrder.filter(k => k !== key);
+        const dropped = this.allTabs[key];
         delete this.allTabs[key];
         delete this.tabLabels[key];
         delete this.customLayouts[key];
+        // Free the clips this tab was holding in RAM. The tab's history stack is
+        // deliberately left in place, so anything a snapshot can still reopen is
+        // kept — closing a tab with no history frees its clip outright.
+        this.purgeRamForFrames(dropped);
         const container = this.tabsContainer || this.tabBar;
         const btn = container && container.querySelector(`[data-tab="${key}"]`);
         if (btn) btn.remove();

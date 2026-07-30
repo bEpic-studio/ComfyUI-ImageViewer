@@ -52,6 +52,8 @@ You can compare media that don't share a resolution or aspect ratio — a 1080p 
 
 Switching orientation re-derives the match, so the pair stays aligned as you cycle modes. Sources that already render at the same size are left untouched. **Contact Sheet** doesn't scale anything this way — it scales both to a shared height and lays them out side by side.
 
+The match is re-derived whenever either side's size becomes known or changes — a clip whose dimensions arrive late, a second source swapped in with <kbd>Shift</kbd>+click, a resized panel. It applies the same way to two tabs and to two pinned history snapshots; snapshots of the same tab usually share a resolution, so there is nothing to correct there.
+
 ---
 
 ## Exiting Comparison Mode

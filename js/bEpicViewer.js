@@ -423,6 +423,7 @@ class ViewerPanel extends HTMLElement {
         this.layoutSel        = sr.getElementById('layout-sel');
         this.refreshBtn       = sr.getElementById('refresh');
         this.ramCacheBtn      = sr.getElementById('ram-cache-btn');
+        this.purgeRamBtn      = sr.getElementById('purge-ram-btn');
         this.helpBtn          = sr.getElementById('help-btn');
         this.helpOverlay      = sr.getElementById('hotkey-help');
         this.exposureControl  = sr.getElementById('exposure-control');
@@ -580,14 +581,21 @@ class ViewerPanel extends HTMLElement {
             this.historyClearBtn.onclick = () => {
                 const dlgWin = this.historyClearBtn.ownerDocument?.defaultView || window;
                 const key = this.activeTab;
+                // Snapshots being dropped: collect them first, purge their RAM
+                // copies once they're gone from this.history (so the in-use scan
+                // spares whatever the live tabs still point at).
+                let dropped;
                 if (!key) {
                     if (!dlgWin.confirm('Clear all in-memory history for all tabs?')) return;
+                    dropped = Object.values(this.history);
                     this.history = {};
                 } else {
                     if (!dlgWin.confirm(`Clear history for ${key}?`)) return;
+                    dropped = this.history[key];
                     delete this.history[key];
                 }
                 this.previewBackup       = null;
+                if (this.purgeRamForFrames) this.purgeRamForFrames(dropped);
                 this.isViewingHistory    = false;
                 this._historyPanelSig    = null;
                 if (this.historyStrip)   this.historyStrip.innerHTML = '';
@@ -719,6 +727,7 @@ class ViewerPanel extends HTMLElement {
         sr.getElementById('loop-sel').onchange = (e) => { this.loopMode = e.target.value; };
         this.refreshBtn.onclick   = () => { this.refreshBtn.classList.add('running'); app.queuePrompt(0); };
         if (this.ramCacheBtn) this.ramCacheBtn.onclick = () => this.toggleVideoRamCache();
+        if (this.purgeRamBtn) this.purgeRamBtn.onclick = () => this.purgeVideoRam();
         this.loadVideoRamCachePref();
         this.bindClearButton();
 
@@ -800,8 +809,10 @@ class ViewerPanel extends HTMLElement {
 
     unregisterNode(nodeId) {
         if (!this.container) return;
+        const dropped = [this.allTabs[nodeId], this.history[nodeId]];
         delete this.allTabs[nodeId];
         delete this.history[nodeId];
+        this.purgeRamForFrames(dropped);
         if (this.activeTab === nodeId) {
             const keys = Object.keys(this.allTabs);
             if (keys.length > 0) this.switchTab(keys[0]);
@@ -895,14 +906,7 @@ class ViewerPanel extends HTMLElement {
             // History push
             let didPrepend = false;
             try {
-                const newSnapshot = data.tabs[k];
-                if (!this.history[finalKey]) this.history[finalKey] = [];
-                const newJson = JSON.stringify(newSnapshot);
-                if (this.history[finalKey].length === 0 || JSON.stringify(this.history[finalKey][0]) !== newJson) {
-                    this.history[finalKey].unshift(JSON.parse(newJson));
-                    if (this.history[finalKey].length > 20) this.history[finalKey].pop();
-                    didPrepend = true;
-                }
+                didPrepend = this.pushHistorySnapshot(finalKey, data.tabs[k]);
             } catch (e) { console.warn('bEpicViewer history capture failed', e); }
 
             if (didPrepend && typeof this.onHistoryPrepended === 'function') {
@@ -1021,6 +1025,7 @@ class ViewerPanel extends HTMLElement {
                             // tab keeps the scale computed for the previous one.
                             this.setFrame(this.currentFrame);
                             this._syncCompareLayout();
+                            this._scheduleCompareSync();
                         }
                         this.updateTabHighlights();
                         return;

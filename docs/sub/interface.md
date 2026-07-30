@@ -78,6 +78,7 @@ The bottom bar contains (left to right):
 | FPS input | Set playback speed (default 25 fps) |
 | Loop mode | Loop / Ping-Pong / Once |
 | RAM cache toggle | Keep video in memory for smooth playback (on by default) |
+| Purge RAM | Empty the video memory cache; hover it for what's resident — see [Purge RAM](playback.md#purge-ram) |
 | Toolbar icons | Shape toggle, Clear Cache, Open Folder, Layouts, Undock, Help |
 
 ## Resizing & Moving the Panel
