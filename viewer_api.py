@@ -31,6 +31,49 @@ def _file_response(path):
     from aiohttp import web
     return web.FileResponse(path, headers={"Cache-Control": "no-cache"})
 
+
+def _resolve_raw_path(path):
+    """Resolve a /bepic/raw_view path and say whether it may be served.
+
+    Returns (abs_path, allowed). Split out of the route so /bepic/probe_paths can
+    answer the same question without having to provoke the 403/404 it would
+    otherwise take to find out.
+    """
+    try:
+        temp_base = folder_paths.get_temp_directory()
+    except Exception:
+        temp_base = None
+    try:
+        out_base = folder_paths.get_output_directory()
+    except Exception:
+        out_base = None
+
+    cand = path
+    if not os.path.isabs(cand):
+        if temp_base:
+            cand = os.path.abspath(os.path.join(temp_base, cand))
+        elif out_base:
+            cand = os.path.abspath(os.path.join(out_base, cand))
+        else:
+            cand = os.path.abspath(path)
+    else:
+        cand = os.path.abspath(cand)
+
+    norm_cand = os.path.normcase(cand)
+    for base in (temp_base, out_base):
+        if not base:
+            continue
+        norm_base = os.path.normcase(os.path.abspath(base))
+        try:
+            if os.path.commonpath([norm_base, norm_cand]).startswith(norm_base):
+                return cand, True
+        except Exception:
+            # commonpath raises across drives / on malformed input; fall back to a
+            # plain prefix test rather than treating the path as denied outright.
+            if norm_cand.startswith(norm_base):
+                return cand, True
+    return cand, False
+
 try:
     from aiohttp import web
 
@@ -103,52 +146,61 @@ try:
             if not path:
                 return web.Response(status=400, text="missing 'path' or 'filename' parameter")
 
-            try:
-                temp_base = folder_paths.get_temp_directory()
-            except Exception:
-                temp_base = None
-            try:
-                out_base = folder_paths.get_output_directory()
-            except Exception:
-                out_base = None
+            cand, allowed = _resolve_raw_path(path)
 
-            cand = path
-            if not os.path.isabs(cand):
-                if temp_base:
-                    cand = os.path.abspath(os.path.join(temp_base, cand))
-                elif out_base:
-                    cand = os.path.abspath(os.path.join(out_base, cand))
-                else:
-                    cand = os.path.abspath(path)
-            else:
-                cand = os.path.abspath(cand)
-
-            norm_cand = os.path.normcase(cand)
-            allowed = False
-            if temp_base:
-                try:
-                    if os.path.commonpath([os.path.normcase(os.path.abspath(temp_base)), norm_cand]).startswith(os.path.normcase(os.path.abspath(temp_base))):
-                        allowed = True
-                except Exception:
-                    if norm_cand.startswith(os.path.normcase(os.path.abspath(temp_base))):
-                        allowed = True
-            if out_base and not allowed:
-                try:
-                    if os.path.commonpath([os.path.normcase(os.path.abspath(out_base)), norm_cand]).startswith(os.path.normcase(os.path.abspath(out_base))):
-                        allowed = True
-                except Exception:
-                    if norm_cand.startswith(os.path.normcase(os.path.abspath(out_base))):
-                        allowed = True
-
+            # Both refusals are answered silently. The viewer's history outlives
+            # the files it names — a cleaned temp dir, an output root belonging to
+            # another machine — and printing here put one line in the ComfyUI log
+            # per dead entry per redraw of the history strip. The client asks
+            # /bepic/probe_paths instead and drops those entries from the panel.
             if not allowed:
-                print(f"[bEpicRawView] access denied for {cand}")
                 return web.Response(status=403, text="access denied")
 
             if not os.path.exists(cand):
-                print(f"[bEpicRawView] file not found: {cand}")
                 return web.Response(status=404, text="file not found")
 
             return _file_response(cand)
+
+        async def _bepic_probe_paths(request):
+            """Report which of the given paths this server can no longer serve.
+
+            Body: {"paths": [{"path": ..., "external": bool}, ...]}; a bare string
+            is treated as a non-external path. Answers with one entry per
+            unreachable path and why, so the history panel can prune the snapshots
+            pointing at them without guessing from a failed image load.
+            """
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            entries = data.get("paths") if isinstance(data, dict) else None
+            if not isinstance(entries, list):
+                entries = []
+
+            unreachable = []
+            for item in entries:
+                if isinstance(item, dict):
+                    p = item.get("path")
+                    external = bool(item.get("external"))
+                else:
+                    p = item
+                    external = False
+                if not p or not isinstance(p, str):
+                    continue
+                # External frames come from the folder picker / drag-drop and are
+                # served by /bepic/view_file, which has no directory restriction —
+                # so for those, existing on disk is the whole test.
+                if external:
+                    if not os.path.isfile(os.path.abspath(p)):
+                        unreachable.append({"path": p, "reason": "gone"})
+                    continue
+                cand, allowed = _resolve_raw_path(p)
+                if not allowed:
+                    unreachable.append({"path": p, "reason": "denied"})
+                elif not os.path.isfile(cand):
+                    unreachable.append({"path": p, "reason": "gone"})
+
+            return web.json_response({"unreachable": unreachable})
 
         async def _bepic_pick_folder(request):
             """Open a server-side folder picker dialog and return a sorted list of image files."""
@@ -358,6 +410,8 @@ try:
         _safe_add("GET", "/api/bepic/open_path", _bepic_open_path)
         _safe_add("GET", "/bepic/raw_view", _bepic_raw_view)
         _safe_add("GET", "/api/bepic/raw_view", _bepic_raw_view)
+        _safe_add("POST", "/bepic/probe_paths", _bepic_probe_paths)
+        _safe_add("POST", "/api/bepic/probe_paths", _bepic_probe_paths)
         _safe_add("GET", "/bepic/clear_cache", _bepic_clear_cache)
         _safe_add("GET", "/api/bepic/clear_cache", _bepic_clear_cache)
         _safe_add("GET", "/bepic/pick_folder", _bepic_pick_folder)

@@ -59,6 +59,15 @@ Right-click any thumbnail to open the context menu:
 
 Removing a snapshot also releases the memory its video was cached in, unless the same file is still open in a tab or referenced by another snapshot — see [Clips Released Automatically](playback.md#clips-released-automatically).
 
+### Snapshots Whose Files Are Gone
+
+History is persisted, so it outlives the files it points at — a temp directory that was cleaned out, an output folder belonging to a different machine or a different ComfyUI install. Those snapshots are dropped from the strip silently, rather than sitting there as broken thumbnails.
+
+An entry only goes when the server confirms it: the viewer asks whether the files are still readable, and asks a second time before removing anything. So a snapshot that arrives a moment before its file finishes writing is kept, and a server that is restarting or unreachable never costs you history. A sequence that lost only *some* of its frames still opens, so it stays too.
+
+> [!NOTE]
+> "Readable" means readable *by this server*. A file that exists but sits outside ComfyUI's `output` and `temp` directories counts as gone, because that is what the viewer's image route will say about it. Only the file on disk is left alone — pruning never deletes anything.
+
 ### Clearing All History
 
 The **Clear Cache** button in the playback toolbar deletes all temporary bEpic files and wipes every tab's history. A confirmation dialog prevents accidental clearing.

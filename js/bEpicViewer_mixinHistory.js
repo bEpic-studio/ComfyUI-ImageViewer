@@ -6,6 +6,13 @@ import { api } from "../../scripts/api.js";
 // be held in RAM by history alone, so falling off the end has to release them.
 const HISTORY_LIMIT = 20;
 
+// Collapse the burst of failures a rebuilt strip produces into one probe.
+const PRUNE_DEBOUNCE_MS = 300;
+// Gap before re-asking about a path the server just called unreachable. A
+// snapshot can be pushed a beat before the file it names is fully on disk, and
+// deleting on that race would throw away a perfectly good entry.
+const PRUNE_CONFIRM_MS  = 1500;
+
 export const HistoryMixin = {
 
     // ── History stack ────────────────────────────────────────────────────────
@@ -29,6 +36,188 @@ export const HistoryMixin = {
         const stack = this.history[key];
         if (!Array.isArray(stack)) return;
         while (stack.length > HISTORY_LIMIT) this.purgeRamForFrames(stack.pop());
+    },
+
+    // ── Pruning snapshots whose files are gone ───────────────────────────────
+    //
+    // History outlives the files it points at: a temp dir that got cleaned, an
+    // output root belonging to another machine. Those entries used to sit in the
+    // strip as broken thumbnails that failed again on every redraw — and the
+    // server logged a line for each one. They're now dropped silently instead.
+    //
+    // Nothing is removed on a guess. A file counts as gone only when the server
+    // says so twice, so a request that fails outright (server restarting, offline)
+    // or a snapshot that landed a beat ahead of its file leaves history intact.
+
+    _probeSeen() {
+        if (!this._probeGood) this._probeGood = new Set();
+        if (!this._probeDead) this._probeDead = new Set();
+        return { good: this._probeGood, dead: this._probeDead };
+    },
+
+    // Forget what was verified, so the next pass re-checks everything. Called when
+    // a load actually fails: a path that probed healthy earlier clearly isn't now.
+    resetHistoryProbeCache() {
+        this._probeGood = new Set();
+        this._probeDead = new Set();
+    },
+
+    // A media element failed to load. Re-verify rather than trust the cache, then
+    // let the normal pass decide whether anything should actually go.
+    noteMediaLoadFailed() {
+        this.resetHistoryProbeCache();
+        this.scheduleHistoryPrune();
+    },
+
+    scheduleHistoryPrune() {
+        if (this._historyPruneTimer) return;
+        this._historyPruneTimer = setTimeout(() => {
+            this._historyPruneTimer = null;
+            this.pruneMissingHistory();
+        }, PRUNE_DEBOUNCE_MS);
+    },
+
+    // Walk every snapshot in history, handing each to `visit`.
+    _eachSnapshot(visit) {
+        for (const key of Object.keys(this.history || {})) {
+            const stack = this.history[key];
+            if (!Array.isArray(stack)) continue;
+            for (const snapshot of stack) {
+                if (Array.isArray(snapshot) && snapshot.length > 0) visit(snapshot, key);
+            }
+        }
+    },
+
+    // Frames without a `path` (a workflow's own SaveImage output, served by
+    // ComfyUI's /view) and blob-backed dropped files aren't ours to judge, so
+    // they're never probed and never pruned.
+    _probeEntry(fr) {
+        if (!fr || fr.url || !fr.path) return null;
+        return { path: fr.path, external: !!fr.external };
+    },
+
+    _dedupeEntries(entries) {
+        const { good, dead } = this._probeSeen();
+        const seen = new Set();
+        const out  = [];
+        for (const e of entries) {
+            if (!e || seen.has(e.path) || good.has(e.path) || dead.has(e.path)) continue;
+            seen.add(e.path);
+            out.push(e);
+        }
+        return out;
+    },
+
+    // The opening pass asks about the FIRST frame of each snapshot only. Probing
+    // every frame would stat a whole sequence per snapshot — tens of thousands of
+    // files across a full history, which is slow enough to notice on network
+    // storage. Files disappear a directory at a time, so the first frame is a
+    // reliable suspect; the frames behind it are only checked once it fails.
+    _historyPathsToProbe() {
+        const out = [];
+        this._eachSnapshot((snapshot) => {
+            const e = this._probeEntry(snapshot[0]);
+            if (e) out.push(e);
+        });
+        return this._dedupeEntries(out);
+    },
+
+    // Every frame of the snapshots whose lead frame came back unreachable. This is
+    // what makes "the whole snapshot is gone" the actual test rather than a guess
+    // from one file.
+    _pathsBehind(leadPaths) {
+        const out = [];
+        this._eachSnapshot((snapshot) => {
+            const lead = this._probeEntry(snapshot[0]);
+            if (!lead || !leadPaths.has(lead.path)) return;
+            for (const fr of snapshot) {
+                const e = this._probeEntry(fr);
+                if (e) out.push(e);
+            }
+        });
+        // Suspect paths are deliberately re-asked here, so skip the seen-cache.
+        const seen = new Set();
+        return out.filter(e => (seen.has(e.path) ? false : (seen.add(e.path), true)));
+    },
+
+    // Ask the server which of these it can't serve. Returns a Set of paths, or
+    // null when the question couldn't be put — which is not the same answer as
+    // "all fine", and callers must not treat it as one.
+    async _probePaths(entries) {
+        if (!entries || entries.length === 0) return new Set();
+        try {
+            const res = await fetch(api.apiURL('/bepic/probe_paths'), {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ paths: entries }),
+            });
+            if (!res.ok) return null;      // older server without the route
+            const data = await res.json();
+            const list = Array.isArray(data && data.unreachable) ? data.unreachable : [];
+            return new Set(list.map(e => (e && typeof e === 'object') ? e.path : e).filter(Boolean));
+        } catch (e) {
+            return null;
+        }
+    },
+
+    async pruneMissingHistory() {
+        if (this._historyPruneInFlight) return;
+        const entries = this._historyPathsToProbe();
+        if (entries.length === 0) return;
+        this._historyPruneInFlight = true;
+        try {
+            const { good, dead } = this._probeSeen();
+
+            const missing = await this._probePaths(entries);
+            if (!missing) return;
+            for (const e of entries) if (!missing.has(e.path)) good.add(e.path);
+            if (missing.size === 0) return;
+
+            await new Promise(r => setTimeout(r, PRUNE_CONFIRM_MS));
+            const suspects  = this._pathsBehind(missing);
+            const confirmed = await this._probePaths(suspects);
+            if (!confirmed || confirmed.size === 0) return;
+            for (const e of suspects) {
+                if (confirmed.has(e.path)) dead.add(e.path);
+                else good.add(e.path);
+            }
+
+            this._removeHistoryEntriesFor(confirmed);
+        } finally {
+            this._historyPruneInFlight = false;
+        }
+    },
+
+    _removeHistoryEntriesFor(missing) {
+        let removed = 0;
+        for (const key of Object.keys(this.history || {})) {
+            const stack = this.history[key];
+            if (!Array.isArray(stack)) continue;
+            // Back to front: removeHistoryItem re-indexes everything after `idx`,
+            // and it is what keeps the selection, the pinned compare pair and the
+            // RAM cache consistent with the shortened stack.
+            for (let idx = stack.length - 1; idx >= 0; idx--) {
+                if (!this._snapshotIsDead(stack[idx], missing)) continue;
+                this.removeHistoryItem(key, idx);
+                removed++;
+            }
+        }
+        if (removed > 0) {
+            this._historyPanelSig = null;
+            this.renderHistoryPanel();
+        }
+        return removed;
+    },
+
+    // A snapshot goes only when there is nothing left behind it. A sequence that
+    // lost some of its frames still opens, so it stays.
+    _snapshotIsDead(snapshot, missing) {
+        if (!Array.isArray(snapshot) || snapshot.length === 0) return false;
+        for (const fr of snapshot) {
+            if (!fr || fr.url || !fr.path) return false;
+            if (!missing.has(fr.path)) return false;
+        }
+        return true;
     },
 
     // ── Per-node image update + history push ────────────────────────────────
@@ -167,6 +356,11 @@ export const HistoryMixin = {
 
             const imgEl = document.createElement('img');
             if (imgObj) {
+                // A thumbnail is only a hint that something is wrong — a video's
+                // poster is a separate temp file, so it can be gone while the clip
+                // itself is fine. The prune pass checks the real media before
+                // anything is removed.
+                imgEl.onerror = () => this.noteMediaLoadFailed();
                 try { imgEl.src = this.thumbUrl(imgObj); } catch (e) { /* ignore */ }
             }
             thumb.appendChild(imgEl);
@@ -230,6 +424,12 @@ export const HistoryMixin = {
         // Replace strip contents in one operation
         this.historyStrip.innerHTML = '';
         this.historyStrip.appendChild(frag);
+
+        // Only reached when the signature changed, so this rides on real rebuilds
+        // — a restore from localStorage, a new output, a tab switch — rather than
+        // on every call. Paths already verified are skipped, so a settled session
+        // sends nothing.
+        this.scheduleHistoryPrune();
 
         let totalHistory = 0;
         Object.values(this.history).forEach(arr => { totalHistory += arr?.length || 0; });

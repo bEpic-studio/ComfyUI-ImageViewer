@@ -829,7 +829,10 @@ export const PlaybackMixin = {
 
     // Only assign src when it has actually changed, to prevent redundant decodes.
     _setImgSrcCached(imgEl, url, onLoadCallback) {
-        imgEl.onerror = () => {};
+        // The frame won't load — moved output, cleaned temp, a path this server
+        // doesn't serve. Hand it to the history prune, which verifies with the
+        // server before dropping anything, so a transient failure costs nothing.
+        imgEl.onerror = () => { if (this.noteMediaLoadFailed) this.noteMediaLoadFailed(); };
         imgEl.onload = () => {
             // A frame that decoded once is in the browser's image cache — record
             // it so the timeline can show which part of a sequence is local.
@@ -1006,6 +1009,13 @@ export const PlaybackMixin = {
             // signal that grows the green bar while a clip downloads.
             v.addEventListener("progress",       () => this.updateCacheBar());
             v.addEventListener("suspend",        () => this.updateCacheBar());
+            // A clip the server won't serve any more fails here rather than in an
+            // <img>. Skipped during a RAM swap: that failure is about the blob, not
+            // about the file, and _reSourceVideo already falls back to streaming.
+            v.addEventListener("error", () => {
+                if (v._bepicRamSwap || !this._videoMode) return;
+                if (v.getAttribute("src") && this.noteMediaLoadFailed) this.noteMediaLoadFailed();
+            });
             this._videoHandlersBound = true;
         }
         this._setVideoSrc(v, url);
