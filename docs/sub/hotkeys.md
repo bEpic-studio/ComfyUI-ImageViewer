@@ -1,11 +1,13 @@
 # Keyboard Shortcuts
 
-All hotkeys are active only when the mouse cursor is **hovering over the viewer panel** (except <kbd>E</kbd>-drag and <kbd>Alt</kbd>+<kbd>Enter</kbd>). Typing in an input or textarea field inside the parameter panel temporarily suspends hotkeys.
+All hotkeys are active only when the mouse cursor is **hovering over the viewer panel** (except <kbd>E</kbd>-drag). Typing in an input or textarea field inside the parameter panel temporarily suspends hotkeys.
+
+Every key on this page can be changed — see [Changing the Hotkeys](#changing-the-hotkeys).
 
 ← [Back to index](../index.md)
 
 > [!TIP]
-> Press `?` while hovering the viewer to open the built-in hotkey overlay without leaving the browser.
+> Press `?` while hovering the viewer to open the built-in hotkey overlay without leaving the browser. It lists the keys that are bound **right now**, so it stays correct after you rebind anything.
 
 ---
 
@@ -65,7 +67,7 @@ All hotkeys are active only when the mouse cursor is **hovering over the viewer 
 
 | Key | Action |
 |---|---|
-| <kbd>Alt</kbd>+<kbd>Enter</kbd> | Queue prompt (run ComfyUI workflow) — works while hovering the viewer |
+| <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | Queue prompt (run ComfyUI workflow) — works from the undocked popout window, where ComfyUI's own shortcut can't reach |
 | <kbd>?</kbd> | Open / close the in-viewer hotkey help overlay |
 
 ## Mouse Interactions
@@ -85,9 +87,40 @@ All hotkeys are active only when the mouse cursor is **hovering over the viewer 
 
 | Condition | Effect on hotkeys |
 |---|---|
-| Mouse outside viewer panel | All hotkeys disabled (except <kbd>Alt</kbd>+<kbd>Enter</kbd>) |
+| Mouse outside viewer panel | Viewer hotkeys disabled (except <kbd>E</kbd>, and any combo you assigned yourself — see below) |
+| Viewer closed or hidden | Viewer hotkeys disabled, even if the cursor was over the panel when it disappeared |
 | Cursor inside an input / textarea | Hotkeys suspended while typing |
 | Viewer undocked to popout window | Hotkeys active in the popout window |
+
+While the viewer is hovered it takes the key for itself, so a viewer hotkey no longer also triggers the ComfyUI command on the same key behind the panel.
+
+---
+
+## Changing the Hotkeys
+
+Viewer hotkeys are registered as ComfyUI commands, so they live in ComfyUI's own editor:
+
+1. Open **Settings** (gear icon) → **Keybinding**.
+2. Search for `bEpic` — every viewer action is listed as *bEpic Viewer: …*, with the key it currently answers to.
+3. Double-click a row (or use the pencil button) and press the combo you want. Add a second combo with **+**, drop one with the trash button, or undo your change with the reset arrow.
+
+Notes:
+
+- **A combo you assign works anywhere**, not only over the viewer — it acts on the panel as long as the panel is open. The shipped defaults stay hover-scoped, so plain keys like <kbd>Space</kbd>, <kbd>F</kbd> and <kbd>1</kbd>–<kbd>9</kbd> don't interfere with the canvas.
+- **The tab keys are nine separate rows** (*Switch To Tab 1* … *9*), so you can rebind them individually.
+- <kbd>E</kbd>-drag for exposure is a held modifier rather than a command, so it isn't rebindable.
+- **Toggle bEpic Image Viewer** is in the same list, so you can put opening the panel on a key too.
+
+### Keys Another Extension Already Owns
+
+Two commands can't share a combo, and ComfyUI hands each combo out on a first-come basis. When something else has already claimed one of the viewer's defaults, that row appears in the editor **without** a keybinding — plain <kbd>R</kbd>, for instance, belongs to ComfyUI's own *Refresh Node Definitions*, and node packs such as KJNodes claim plain letters like <kbd>F</kbd> and <kbd>S</kbd> for canvas commands.
+
+The key still works in the viewer while the panel is hovered, and the viewer now takes it for itself there, so the other extension's command no longer fires behind the panel. To get a row you can edit, either:
+
+- assign your own combo to it in the editor, or
+- remove the other command's binding and reload — the viewer re-checks at startup and registers its default if the combo has become free.
+
+Every skipped default is reported in the browser console when the page loads, naming the key and the action, so you can see exactly which ones are affected on your install.
 
 ---
 

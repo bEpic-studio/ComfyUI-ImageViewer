@@ -63,19 +63,12 @@
     </div>
     <div id="hotkey-help" class="hotkey-overlay">
         <h3>Viewer Hotkeys</h3>
-        <div><b>Left:</b> Step Back</div>
-        <div><b>Right:</b> Step Forward</div>
-        <div><b>Space:</b> Play/Pause</div>
-        <div><b>Ctrl+Left:</b> First Frame</div>
-        <div><b>Ctrl+Right:</b> Last Frame</div>
+        <!-- Filled from the keymap on open, so it lists the keys actually bound. -->
+        <div id="help-keys"></div>
         <div><b>Ctrl+Enter:</b> Queue Prompt</div>
-        <div><b>F:</b> Toggle Fit Zoom</div>
-        <div><b>C:</b> Cycle Compare Modes (off → split → contact)</div>
-        <div><b>R / G / B:</b> Toggle Red, Green, Blue channel (press again for RGB)</div>
         <div><b>Hold E + Drag:</b> Adjust Exposure</div>
         <div><b>Shift+Click Tabs:</b> Select two for comparison</div>
         <div><b>Shift+Click History:</b> Compare two snapshots</div>
-        <div><b>Up/Down Arrows:</b> Navigate history items</div>
         <div><b>Ctrl-left drag on Timeline</b>  Select playback range</div>
         <div id="help-roto" style="display:none; margin-top:14px; border-top:1px solid #333; padding-top:10px;">
             <h3 style="color:#f60;">Roto Tool</h3>
@@ -101,7 +94,7 @@
             <div><b>Drag a corner:</b> resize &nbsp;·&nbsp; <b>Drag the body:</b> move</div>
             <div><b>Right-click / Ctrl+click a box:</b> delete &nbsp;·&nbsp; <b>Middle-drag:</b> pan</div>
         </div>
-        <p style="font-size:11px; color:#888; margin-top:20px;">Click anywhere to close</p>
+        <p style="font-size:11px; color:#888; margin-top:20px;">Change these keys in ComfyUI's Settings &rarr; Keybinding (search "bEpic") &nbsp;&middot;&nbsp; Click anywhere to close</p>
     </div>
     <div class="controls">
         <div id="kf-editor" class="kf-editor" style="display:none;"></div>

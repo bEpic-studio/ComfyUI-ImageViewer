@@ -16,6 +16,7 @@ import { AnnotateMixin } from "./bEpicViewer_annotate.js";
 import { DnDMixin }      from "./bEpicViewer_mixinDnD.js";
 import { SendFromNodeMixin, registerSendToViewerMenu } from "./bEpicViewer_sendFromNode.js";
 import { registerSendNode } from "./bEpicViewer_nodeTools.js";
+import { viewerCommands, viewerKeybindings, VIEWER_TARGET_ID } from "./bEpicViewer_keymap.js";
 
 let globalViewerPanel = null;
 const watchedNodeIds  = new Set();
@@ -78,6 +79,14 @@ function _toggleViewerPanelFromUi() {
     _setViewerPanelToggle(!isViewerPanelToggledOn, { syncDisplay: true });
 }
 
+// The panel a keymap command should act on: the viewer, but only while it is on
+// screen. Firing playback or channel changes at a closed panel would be invisible.
+function _activeViewerPanel() {
+    const panel = globalViewerPanel || document.querySelector("bepic-viewer-panel");
+    if (!panel) return null;
+    return panel.isViewerVisible && panel.isViewerVisible() ? panel : null;
+}
+
 // Preload CSS + HTML + icon skin in parallel so they are ready before the first
 // element is connected to the DOM.
 const timestamp    = Date.now();
@@ -119,7 +128,7 @@ class ViewerPanel extends HTMLElement {
         super();
         this.attachShadow({ mode: 'open' });
 
-        //  State 
+        //  State
         this.allTabs             = {};
         this.activeTab           = null;
         this.compareTab          = null;
@@ -191,6 +200,13 @@ class ViewerPanel extends HTMLElement {
     }
 
     connectedCallback() {
+        // Named so the viewer's keybindings can name it as their target element —
+        // that is what keeps ComfyUI from dispatching them app-wide. See
+        // bEpicViewer_keymap.js. Set here rather than in the constructor, which is
+        // not allowed to give the element attributes, and guarded so a second
+        // panel can't duplicate the id.
+        if (!this.id && !document.getElementById(VIEWER_TARGET_ID)) this.id = VIEWER_TARGET_ID;
+
         if (!this._beforeUnloadHandler) {
             this._beforeUnloadHandler = () => this.persistViewerState();
             window.addEventListener('beforeunload', this._beforeUnloadHandler);
@@ -346,7 +362,10 @@ class ViewerPanel extends HTMLElement {
         // cursor) — otherwise hotkeys silently die while over the canvas.
         this.container.onmousemove  = () => { if (!this.isHovered) this.isHovered = true; };
         this.container.onmouseleave = () => { this.isHovered = false; };
-        window.addEventListener('keydown', (e) => this.handleKeyDown(e));
+        // Capture phase: ComfyUI's global keybinding handler also sits on window,
+        // in the bubble phase and registered earlier, so this is the only place a
+        // hotkey the viewer claims can be stopped before ComfyUI acts on it too.
+        window.addEventListener('keydown', (e) => this.handleKeyDown(e), true);
         window.addEventListener('keyup', (e) => this.handleKeyUp(e));
 
         this._cacheElements();
@@ -673,18 +692,7 @@ class ViewerPanel extends HTMLElement {
     _bindToolbarHandlers() {
         const sr = this.shadowRoot;
 
-        this.helpBtn.onclick      = () => {
-            // Reveal the tool-specific section only for the tool that's active, so
-            // the help matches the current context.
-            const active = this._toolState ? this._toolState.active : "none";
-            const rotoSec = this.helpOverlay.querySelector('#help-roto');
-            const sam3Sec = this.helpOverlay.querySelector('#help-sam3');
-            const sam3boxSec = this.helpOverlay.querySelector('#help-sam3box');
-            if (rotoSec) rotoSec.style.display = active === "roto" ? "block" : "none";
-            if (sam3Sec) sam3Sec.style.display = active === "sam3" ? "block" : "none";
-            if (sam3boxSec) sam3boxSec.style.display = active === "sam3box" ? "block" : "none";
-            this.helpOverlay.style.display = "flex";
-        };
+        this.helpBtn.onclick      = () => this.toggleHelpOverlay(true);
         this.helpOverlay.onclick  = () => { this.helpOverlay.style.display = "none"; };
 
         if (this.layoutSel) this.layoutSel.onchange = async (e) => {
@@ -716,12 +724,7 @@ class ViewerPanel extends HTMLElement {
 
         this.rotateBtn.onclick = () => this.cycleSliderMode();
         if (this.closeBtn) this.closeBtn.onclick = () => { this.style.display = 'none'; };
-        this.shapeBtn.onclick  = () => {
-            this.showShape                  = !this.showShape;
-            this.shapeOverlay.style.display = this.showShape ? "block" : "none";
-            this.shapeBtn.classList.toggle('active', this.showShape);
-            this.updateShapeInfo();
-        };
+        this.shapeBtn.onclick  = () => this.toggleShapeOverlay();
 
         sr.getElementById('fps-in').oninput = (e) => {
             let val = parseInt(e.target.value);
@@ -1146,7 +1149,12 @@ app.registerExtension({
                 _toggleViewerPanelFromUi();
             },
         },
+        // One command per viewer hotkey, which is what puts them in
+        // Settings → Keybinding for rebinding. They act on the visible panel, so
+        // a combo assigned there also works with the cursor off the viewer.
+        ...viewerCommands(_activeViewerPanel),
     ],
+    keybindings: viewerKeybindings(),
     menuCommands: [
         { path: ["Extensions", "bEpic"], commands: ["bEpic.toggleViewer"] },
     ],

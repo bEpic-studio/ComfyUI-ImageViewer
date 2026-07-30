@@ -120,7 +120,9 @@ This also releases any video held in memory, since those clips were read from th
 
 Press the **?** button in the toolbar, or hover the viewer and press <kbd>?</kbd>, to display a full hotkey reference overlay directly inside the viewer. Click anywhere on the overlay to dismiss it.
 
-See also: [Keyboard Shortcuts](hotkeys.md)
+The listed keys are read from the live keybindings rather than hard-coded, so anything you rebind in ComfyUI's keybinding editor shows up here as well. When a roto or SAM3 tool is active, that tool's own reference is appended below.
+
+See also: [Keyboard Shortcuts](hotkeys.md) · [Changing the Hotkeys](hotkeys.md#changing-the-hotkeys)
 
 ---
 

@@ -3,6 +3,7 @@
 // undocking, hotkeys, tab highlights, compare mode, slider modes.
 import { api } from "../../scripts/api.js";
 import { app } from "../../scripts/app.js";
+import { resolveViewerAction, viewerHelpRows } from "./bEpicViewer_keymap.js";
 
 export const UIMixin = {
 
@@ -46,6 +47,11 @@ export const UIMixin = {
 
     // ── Hotkeys ──────────────────────────────────────────────────────────────
 
+    // Every hotkey below the exposure modifier comes out of the keymap table, so
+    // whatever the user has set in Settings → Keybinding is what the viewer
+    // answers to. Bound as a capture-phase listener (see bEpicViewer.js) so a
+    // keystroke the viewer claims can be stopped before ComfyUI's own global
+    // handler — which sits on window in the bubble phase — ever sees it.
     handleKeyDown(e) {
         const target   = e.composedPath()[0];
         const isTyping = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
@@ -56,68 +62,35 @@ export const UIMixin = {
             return;
         }
 
-        if (!this.isHovered) return;
+        if (!this.isHovered || !this.isViewerVisible()) return;
 
-        switch (e.key) {
-            case "ArrowLeft":
-                e.preventDefault();
-                if (e.ctrlKey) this.setFrame(this.getTimelineBounds().min);
-                else this.step(-1);
-                break;
-            case "ArrowRight":
-                e.preventDefault();
-                if (e.ctrlKey) this.setFrame(this.getTimelineBounds().max);
-                else this.step(1);
-                break;
-            case "ArrowUp":
-            case "ArrowDown":
-                // navigate history panel items when visible
-                if (this.historyPanel && this.historyPanel.style.display !== 'none') {
-                    e.preventDefault();
-                    const delta = e.key === "ArrowDown" ? 1 : -1;
-                    if (typeof this.navigateHistory === 'function') this.navigateHistory(delta);
-                }
-                break;
-            case " ":
-                e.preventDefault();
-                this.isPlaying ? this.stop() : this.play();
-                break;
-            case "Enter":
-                // Ctrl/Cmd+Enter queues a prompt (matching ComfyUI). In the docked
-                // panel ComfyUI's own global shortcut already fires, so only handle
-                // it here for the undocked popout (which has no such shortcut) to
-                // avoid queuing the prompt twice.
-                if (e.ctrlKey || e.metaKey) {
-                    const fromPopout = !!(this.popoutWindow && !this.popoutWindow.closed &&
-                        e.target && e.target.ownerDocument === this.popoutWindow.document);
-                    if (fromPopout) { e.preventDefault(); app.queuePrompt(0); }
-                }
-                break;
-            case "f": case "F":
-                e.preventDefault(); this.fitView(); break;
-            case "c": case "C":
-                e.preventDefault(); this.cycleCompareMode(); break;
-            case "r": case "R":
-                e.preventDefault();
-                this.setChannelView(this.channelView === 'red' ? 'all' : 'red');
-                break;
-            case "g": case "G":
-                e.preventDefault();
-                this.setChannelView(this.channelView === 'green' ? 'all' : 'green');
-                break;
-            case "b": case "B":
-                e.preventDefault();
-                this.setChannelView(this.channelView === 'blue' ? 'all' : 'blue');
-                break;
-            case "1": case "2": case "3": case "4": case "5":
-            case "6": case "7": case "8": case "9": {
-                e.preventDefault();
-                const idx  = parseInt(e.key) - 1;
-                const tabs = this.getTabOrderForHotkeys();
-                if (tabs.length > 1 && idx < tabs.length) this.switchTab(tabs[idx]);
-                break;
-            }
+        // Ctrl/Cmd+Enter queues a prompt (matching ComfyUI). In the docked panel
+        // ComfyUI's own global shortcut already fires, so only handle it here for
+        // the undocked popout (which has no such shortcut) to avoid queuing the
+        // prompt twice.
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            const fromPopout = !!(this.popoutWindow && !this.popoutWindow.closed &&
+                e.target && e.target.ownerDocument === this.popoutWindow.document);
+            if (fromPopout) { e.preventDefault(); app.queuePrompt(0); }
+            return;
         }
+
+        const action = resolveViewerAction(e);
+        if (!action) return;
+        if (action.enabled && !action.enabled(this)) return;
+
+        // While the viewer is hovered it owns its own hotkeys: stop here so the
+        // same keystroke doesn't also trigger a ComfyUI command behind the panel.
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        action.run(this, e);
+    },
+
+    // Hover alone isn't enough to claim a keystroke — hiding the panel under the
+    // cursor never fires mouseleave, so `isHovered` can outlive it being on screen.
+    isViewerVisible() {
+        if (this.popoutWindow && !this.popoutWindow.closed) return true;
+        return !!this.isConnected && this.style.display !== 'none';
     },
 
     handleKeyUp(e) {
@@ -142,6 +115,57 @@ export const UIMixin = {
         }
 
         return Object.keys(this.allTabs);
+    },
+
+    // ── Overlays ─────────────────────────────────────────────────────────────
+
+    toggleShapeOverlay() {
+        this.showShape = !this.showShape;
+        if (this.shapeOverlay) this.shapeOverlay.style.display = this.showShape ? "block" : "none";
+        if (this.shapeBtn) this.shapeBtn.classList.toggle('active', this.showShape);
+        this.updateShapeInfo();
+    },
+
+    toggleHelpOverlay(force) {
+        if (!this.helpOverlay) return;
+        // Closed is the stylesheet's default, so the inline style is empty until
+        // the overlay has been opened once — ask for the computed value instead.
+        const view   = this.helpOverlay.ownerDocument.defaultView || window;
+        const isOpen = view.getComputedStyle(this.helpOverlay).display !== "none";
+        const show   = (force === undefined) ? !isOpen : !!force;
+        if (!show) { this.helpOverlay.style.display = "none"; return; }
+
+        // Reveal the tool-specific section only for the tool that's active, so the
+        // help matches the current context.
+        const active = this._toolState ? this._toolState.active : "none";
+        const section = (sel, on) => {
+            const el = this.helpOverlay.querySelector(sel);
+            if (el) el.style.display = on ? "block" : "none";
+        };
+        section('#help-roto',    active === "roto");
+        section('#help-sam3',    active === "sam3");
+        section('#help-sam3box', active === "sam3box");
+
+        this.renderHelpKeys();
+        this.helpOverlay.style.display = "flex";
+    },
+
+    // The listed keys are whatever is bound right now, not the shipped defaults,
+    // so the overlay stays honest after a rebind in Settings → Keybinding.
+    renderHelpKeys() {
+        const host = this.helpOverlay && this.helpOverlay.querySelector('#help-keys');
+        if (!host) return;
+        const frag = document.createDocumentFragment();
+        for (const row of viewerHelpRows()) {
+            const line = document.createElement('div');
+            const key  = document.createElement('b');
+            key.textContent = `${row.keys}:`;
+            line.appendChild(key);
+            line.appendChild(document.createTextNode(` ${row.label}`));
+            frag.appendChild(line);
+        }
+        host.innerHTML = '';
+        host.appendChild(frag);
     },
 
     // ── Undock / re-dock ─────────────────────────────────────────────────────
@@ -196,7 +220,7 @@ export const UIMixin = {
             this.style.display          = 'none';
 
             this.popoutWindow.onbeforeunload = () => this.restoreDock();
-            this.popoutWindow.addEventListener('keydown', (e) => this.handleKeyDown(e));
+            this.popoutWindow.addEventListener('keydown', (e) => this.handleKeyDown(e), true);
             this.popoutWindow.addEventListener('keyup', (e) => this.handleKeyUp(e));
             this.bindClearButton();
         }

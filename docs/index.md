@@ -50,7 +50,7 @@ All viewer state — open tabs, history stacks, panel positions, layouts — is 
 | [Parameter Panel](sub/params-panel.md) | Live node params, lock, dock, resize |
 | [Other Features](sub/other.md) | File browser, send from loader nodes, undocking, layouts, cache management |
 | [Node Reference](sub/nodes.md) | Full input/output spec for the bEpicSendToViewer node |
-| [Keyboard Shortcuts](sub/hotkeys.md) | Complete hotkey reference |
+| [Keyboard Shortcuts](sub/hotkeys.md) | Complete hotkey reference, and how to rebind the keys in ComfyUI's keybinding editor |
 
 
 
