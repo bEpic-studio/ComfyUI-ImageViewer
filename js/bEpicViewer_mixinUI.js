@@ -800,6 +800,22 @@ export const UIMixin = {
         if (this.videoCompare) this.videoCompare.style.transform = tc;
     },
 
+    // Re-derive everything about the compare layer that depends on the two media
+    // sizes: the side-by-side layout, the aspect-match scale and the wipe seam.
+    //
+    // Both decoded sizes arrive asynchronously and in either order, so anything
+    // that learns a new one (an image load, a video's metadata/resize, a new
+    // compare source, a viewport resize) calls this instead of recomputing a
+    // subset. Note this deliberately does NOT go through updateTransform: that
+    // skips no-op zoom/pan signatures, which is exactly the case here — the media
+    // changed size, the zoom didn't.
+    _syncCompareLayout() {
+        if (!this.isComparing) return;
+        if (this.sliderMode === 'contact') this.resizeContactContainer();
+        this._applyCompareTransform();
+        this.updateCompareVisuals();
+    },
+
     getContactLayout() {
         const base  = this._baseMediaSize();
         const baseW = base.w;

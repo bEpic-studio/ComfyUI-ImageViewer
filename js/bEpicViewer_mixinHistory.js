@@ -91,8 +91,12 @@ export const HistoryMixin = {
         if (!this.isComparing) {
             this.toggleCompare();          // ends in setFrame + updateTransform
         } else {
+            // Zoom/pan don't change when only the pinned pair does, so
+            // updateTransform would skip its no-op signature — the compare layer's
+            // own scale and clip have to be re-derived directly.
             this.setFrame(this.currentFrame);
             this.updateTransform();
+            this._syncCompareLayout();
         }
         this.updateTabHighlights();
         this.renderHistoryPanel();

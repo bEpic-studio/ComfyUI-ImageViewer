@@ -1010,8 +1010,18 @@ class ViewerPanel extends HTMLElement {
                     }
                     if (this.activeTab && this.activeTab !== k) {
                         this.compareTab = k;
-                        if (!this.isComparing) this.toggleCompare();
-                        else this.setFrame(this.currentFrame);
+                        if (!this.isComparing) {
+                            this.toggleCompare();          // ends in setFrame + updateTransform
+                        } else {
+                            // Already comparing: only the compare source changed, so
+                            // zoom/pan are untouched and updateTransform would skip
+                            // its no-op signature. Re-derive the compare layer's own
+                            // scale/clip against the new media explicitly, the same
+                            // way enterHistoryCompare does — without this the second
+                            // tab keeps the scale computed for the previous one.
+                            this.setFrame(this.currentFrame);
+                            this._syncCompareLayout();
+                        }
                         this.updateTabHighlights();
                         return;
                     }

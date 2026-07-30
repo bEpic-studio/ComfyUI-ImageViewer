@@ -478,17 +478,13 @@ export const PlaybackMixin = {
 
         // Only update src when URL actually changes (avoids re-decode flicker)
         this._setImgSrcCached(this.imgBase, baseUrl, () => {
-            if (this.sliderMode === 'contact') this.resizeContactContainer();
             if (this.updateImageFrame) this.updateImageFrame();
             if (this.updateShapeInfo) this.updateShapeInfo();
             if (this.updateToolOverlay) this.updateToolOverlay();
             // The aspect-match scale is derived from BOTH media sizes, so the
             // base decoding last has to re-derive it too — otherwise whichever
             // layer loaded first keeps a scale computed against a missing size.
-            if (this.isComparing) {
-                this._applyCompareTransform && this._applyCompareTransform();
-                this.updateCompareVisuals && this.updateCompareVisuals();
-            }
+            this._syncCompareLayout();
         });
 
         // Path bar
@@ -533,12 +529,10 @@ export const PlaybackMixin = {
         const o = compImgs[compIdx];
         if (!o) return;
         this._setImgSrcCached(this.imgCompare, this.buildImgUrl(o), () => {
-            if (this.sliderMode === 'contact') this.resizeContactContainer();
             if (this.updateImageFrame) this.updateImageFrame();
             // Compare image size is known now → align its frame to the base's and
             // re-derive the wipe seam against the aligned box.
-            this._applyCompareTransform && this._applyCompareTransform();
-            this.updateCompareVisuals && this.updateCompareVisuals();
+            this._syncCompareLayout();
         });
     },
 
@@ -549,7 +543,8 @@ export const PlaybackMixin = {
         const v = this.videoCompare;
         if (!v) return;
         const key = vObj.path || vObj.filename || "";
-        if (v.dataset.key !== key) {
+        const keyChanged = v.dataset.key !== key;
+        if (keyChanged) {
             v.dataset.key = key;
             v.loop  = true;
             v.muted = true;
@@ -559,14 +554,19 @@ export const PlaybackMixin = {
                     if (!(this._compareVideoFrames > 0) && v.duration) {
                         this._compareVideoFrames = Math.max(1, Math.round(v.duration * (this._compareVideoFps || 24)));
                     }
-                    if (this.sliderMode === 'contact') this.resizeContactContainer();
                     // videoWidth/Height are known now → recompute the aspect-match
                     // scale and re-derive the wipe seam against the new box.
-                    this._applyCompareTransform && this._applyCompareTransform();
-                    this.updateCompareVisuals && this.updateCompareVisuals();
+                    this._syncCompareLayout();
                     // Re-seek: a currentTime set before metadata loaded is ignored.
                     this._updateCompareFrame(this.currentFrame);
                 });
+                // A <video> fires `resize` whenever its intrinsic size becomes
+                // known or changes — including a swap to the RAM-cached copy, which
+                // doesn't necessarily re-run the metadata path above. This is the
+                // one signal that can't be missed, whatever order the two layers
+                // decode in, so the aspect match can't be left computed against a
+                // size of 0.
+                v.addEventListener("resize", () => this._syncCompareLayout());
                 v._cmpHandlersBound = true;
             }
             this._setVideoSrc(v, this.buildImgUrl(vObj));
@@ -574,16 +574,16 @@ export const PlaybackMixin = {
             this._compareVideoFrames = (vObj.frames && vObj.frames > 0) ? vObj.frames : 0;
         }
 
-        // Reveal the compare video, hide the compare <img>. On first reveal, sync
-        // its transform + clip once (ongoing changes flow through updateTransform /
-        // the slider drag), so playback doesn't re-run layout every frame.
+        // Reveal the compare video, hide the compare <img>. Sync its transform +
+        // clip on reveal and whenever the clip itself changes — a different clip
+        // means a different aspect-match scale, and swapping between two already
+        // decoded compare tabs fires no load event to recompute it. Ongoing
+        // changes flow through updateTransform / the slider drag, so scrubbing and
+        // playback don't re-run layout every frame.
         const wasHidden = v.style.display === "none";
         if (this.imgCompare) this.imgCompare.style.display = "none";
         v.style.display = "block";
-        if (wasHidden) {
-            this._applyCompareTransform && this._applyCompareTransform();
-            this.updateCompareVisuals && this.updateCompareVisuals();
-        }
+        if (wasHidden || keyChanged) this._syncCompareLayout();
 
         const fps = this._compareVideoFps || 24;
         if (this.isPlaying) {
@@ -635,9 +635,17 @@ export const PlaybackMixin = {
             if (this.updateCacheBar) this.updateCacheBar();
             if (onLoadCallback) onLoadCallback();
         };
-        if (imgEl.src !== url) imgEl.src = url;
-        // Unchanged src means no load event fires, so record it here instead.
-        else if (imgEl.complete && imgEl.naturalWidth) _markFrameLoaded(url);
+        if (imgEl.src !== url) { imgEl.src = url; return; }
+        // Unchanged src means no load event fires, so record it — and run the
+        // callback anyway. The layer is already decoded, so whatever the caller
+        // derives from its size (aspect match, wipe seam, side-by-side layout) is
+        // computable right now, and skipping it left the compare layer scaled for
+        // the media it replaced. URLs are stable for path-based frames, so this is
+        // the normal case when re-showing a frame, not a rare one.
+        if (imgEl.complete && imgEl.naturalWidth) {
+            _markFrameLoaded(url);
+            if (onLoadCallback) onLoadCallback();
+        }
     },
 
     // ── Cached-frame indicator ────────────────────────────────────────────────
@@ -787,6 +795,11 @@ export const PlaybackMixin = {
             v.addEventListener("timeupdate",     () => this._videoOnTimeUpdate());
             v.addEventListener("loadedmetadata", () => this._videoOnMeta());
             v.addEventListener("ended",          () => this._videoOnEnded());
+            // The base's decoded size feeds the compare layer's aspect match, and
+            // `resize` is the one event that always fires when it becomes known —
+            // including on a RAM-cache swap, and when the clip was already loaded
+            // before compare mode was switched on.
+            v.addEventListener("resize",         () => this._syncCompareLayout());
             // `progress` is how the browser reports buffering advancing — the only
             // signal that grows the green bar while a clip downloads.
             v.addEventListener("progress",       () => this.updateCacheBar());
@@ -863,9 +876,7 @@ export const PlaybackMixin = {
         // that decoded before the base would otherwise stay mis-scaled — one media
         // rendered larger than the other. Recompute them against the real base size.
         if (this.isComparing) {
-            if (this.sliderMode === 'contact') this.resizeContactContainer();
-            this._applyCompareTransform && this._applyCompareTransform();
-            this.updateCompareVisuals && this.updateCompareVisuals();
+            this._syncCompareLayout();
             this._updateCompareFrame && this._updateCompareFrame(this.currentFrame);
         }
     },

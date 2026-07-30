@@ -64,6 +64,9 @@ export const ToolsMixin = {
             this._toolResizeObs = new ResizeObserver(() => {
                 this.updateImageFrame && this.updateImageFrame();
                 this.updateToolOverlay && this.updateToolOverlay();
+                // The compare aspect match and the wipe seam are both measured
+                // against the viewport box, so they go stale on a resize too.
+                this._syncCompareLayout && this._syncCompareLayout();
             });
             this._toolResizeObs.observe(this.viewport);
         } catch (e) {}
