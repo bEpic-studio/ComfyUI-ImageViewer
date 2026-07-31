@@ -30,18 +30,8 @@
 .tab-close > svg { width: 12px; height: 12px; stroke: currentColor; fill: none; display: block; pointer-events: none; }
 .tab-close:hover { color: #f44; }
 
-#shape-btn.active, #params-btn.active, #range-btn.active, #history-toggle-btn.active, #ram-cache-btn.active { color: #f60; }
-#shape-btn.active > svg, #params-btn.active > svg, #range-btn.active > svg, #history-toggle-btn.active > svg, #ram-cache-btn.active > svg { stroke: #f60; }
-/* RAM cache off: dim it so the disabled state reads at a glance. */
-#ram-cache-btn { color: #666; }
-#ram-cache-btn > svg { stroke: #666; }
-/* Purge: dimmed further while there is nothing cached to purge. */
-#purge-ram-btn { color: #888; }
-#purge-ram-btn > svg { stroke: #888; }
-#purge-ram-btn.empty { color: #555; }
-#purge-ram-btn.empty > svg { stroke: #555; }
-#purge-ram-btn:hover { color: #f60; }
-#purge-ram-btn:hover > svg { stroke: #f60; }
+#shape-btn.active, #params-btn.active, #range-btn.active, #history-toggle-btn.active { color: #f60; }
+#shape-btn.active > svg, #params-btn.active > svg, #range-btn.active > svg, #history-toggle-btn.active > svg { stroke: #f60; }
 #refresh { color: #eee; }
 #refresh > svg { stroke: #eee; }
 #refresh.running { animation: spin 1s linear infinite; }
@@ -337,14 +327,6 @@ option { text-align: left; }
     z-index: 0; pointer-events: none;
     display: none; border-left: 1px solid #f60; border-right: 1px solid #f60;
 }
-
-/* Locally-held frames: a thin green bar along the top of the timeline track.
-   z-index 0 keeps it under the scrub thumb; sitting after .timeline-range in the
-   DOM paints it over the orange sub-range fill. */
-.timeline-cached { position: absolute; top: 0; left: 0; right: 0; height: 3px;
-    z-index: 0; pointer-events: none; display: none; }
-.timeline-cached i { position: absolute; top: 0; bottom: 0; background: #28d17c;
-    border-radius: 1px; min-width: 1px; }
 
 /* Roto keyframe ticks on the timeline (draggable to retime) */
 .kf-ticks { position: absolute; top: 0; left: 0; right: 0; height: 100%; pointer-events: none; z-index: 3; }

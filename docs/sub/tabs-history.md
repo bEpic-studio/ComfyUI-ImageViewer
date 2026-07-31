@@ -57,8 +57,6 @@ Right-click any thumbnail to open the context menu:
 | Copy Image Path | Copies the absolute file path of that snapshot to the clipboard |
 | Remove from History | Deletes that snapshot from the strip (does not delete the file on disk) |
 
-Removing a snapshot also releases the memory its video was cached in, unless the same file is still open in a tab or referenced by another snapshot — see [Clips Released Automatically](playback.md#clips-released-automatically).
-
 Thumbnails in the strip load lazily, so only the ones scrolled into view hold a decoded image.
 
 ### Snapshots Whose Files Are Gone

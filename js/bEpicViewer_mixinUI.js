@@ -258,12 +258,6 @@ export const UIMixin = {
                 const js = await res.json();
                 dlgWin.alert(`Cleared ${js.deleted || 0} files from bEpic temp cache.`);
                 try {
-                    // The RAM-cached clips were read from the temp files that just
-                    // got deleted, so drop them too rather than keep serving copies
-                    // of files the user asked to clear. Goes through _releaseVideoRam
-                    // so a clip playing from a blob is re-pointed at its URL before
-                    // that blob is revoked out from under it.
-                    this._releaseVideoRam();
                     this.history        = {};
                     this.previewBackup  = null;
                     this.isViewingHistory = false;

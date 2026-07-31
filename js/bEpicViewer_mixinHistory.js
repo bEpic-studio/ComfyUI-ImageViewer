@@ -29,13 +29,11 @@ export const HistoryMixin = {
         return true;
     },
 
-    // Drop snapshots past the cap, releasing the RAM copy of each clip that goes
-    // with them. Without this the cache quietly grows to a 20-clip backlog per tab
-    // that nothing references any more.
+    // Drop snapshots past the cap.
     trimHistory(key) {
         const stack = this.history[key];
         if (!Array.isArray(stack)) return;
-        while (stack.length > HISTORY_LIMIT) this.purgeRamForFrames(stack.pop());
+        while (stack.length > HISTORY_LIMIT) stack.pop();
     },
 
     // ── Pruning snapshots whose files are gone ───────────────────────────────
@@ -554,12 +552,7 @@ export const HistoryMixin = {
             this.restoreHistoryView();
         }
 
-        const removed = stack[index];
         stack.splice(index, 1);
-        // Hand back the RAM this snapshot's clip was held in. Runs after the splice
-        // so the in-use scan can't find the entry we just dropped — and it keeps
-        // anything a tab or another snapshot still points at.
-        this.purgeRamForFrames(removed);
 
         if (this.currentHistoryKey === key && Number.isInteger(this.currentHistoryIndex)) {
             if (this.currentHistoryIndex > index) {
@@ -706,14 +699,9 @@ export const HistoryMixin = {
     closeTab(key) {
         if (this._revokeDroppedTab) this._revokeDroppedTab(key);   // free blob: URLs of dropped files
         this.tabOrder = this.tabOrder.filter(k => k !== key);
-        const dropped = this.allTabs[key];
         delete this.allTabs[key];
         delete this.tabLabels[key];
         delete this.customLayouts[key];
-        // Free the clips this tab was holding in RAM. The tab's history stack is
-        // deliberately left in place, so anything a snapshot can still reopen is
-        // kept — closing a tab with no history frees its clip outright.
-        this.purgeRamForFrames(dropped);
         const container = this.tabsContainer || this.tabBar;
         const btn = container && container.querySelector(`[data-tab="${key}"]`);
         if (btn) btn.remove();
