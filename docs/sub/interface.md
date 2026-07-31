@@ -77,8 +77,8 @@ The bottom bar contains (left to right):
 | Green bar on the timeline | Which frames are held locally — see [Playback Controls](playback.md#video-playback) |
 | FPS input | Set playback speed (default 25 fps) |
 | Loop mode | Loop / Ping-Pong / Once |
-| RAM cache toggle | Keep video in memory for smooth playback (on by default) |
-| Purge RAM | Empty the video memory cache; hover it for what's resident — see [Purge RAM](playback.md#purge-ram) |
+| RAM cache toggle | Keep video in memory for smooth playback (off by default) |
+| Purge viewer memory | Hand back cached clips, video pre-buffer and decoded thumbnails; hover it for what's resident — see [Purge Viewer Memory](playback.md#purge-viewer-memory) |
 | Toolbar icons | Shape toggle, Clear Cache, Open Folder, Layouts, Undock, Help |
 
 ## Resizing & Moving the Panel

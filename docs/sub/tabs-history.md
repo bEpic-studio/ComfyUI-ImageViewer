@@ -59,6 +59,8 @@ Right-click any thumbnail to open the context menu:
 
 Removing a snapshot also releases the memory its video was cached in, unless the same file is still open in a tab or referenced by another snapshot — see [Clips Released Automatically](playback.md#clips-released-automatically).
 
+Thumbnails in the strip load lazily, so only the ones scrolled into view hold a decoded image.
+
 ### Snapshots Whose Files Are Gone
 
 History is persisted, so it outlives the files it points at — a temp directory that was cleaned out, an output folder belonging to a different machine or a different ComfyUI install. Those snapshots are dropped from the strip silently, rather than sitting there as broken thumbnails.

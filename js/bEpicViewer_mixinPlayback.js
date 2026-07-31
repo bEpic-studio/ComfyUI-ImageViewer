@@ -13,7 +13,10 @@ import { app } from "../../scripts/app.js";
 
 const VIDEO_RAM_BUDGET   = 1536 * 1024 * 1024;   // total bytes held across clips
 const VIDEO_RAM_MAX_FILE = 512  * 1024 * 1024;   // stream anything bigger
-const RAM_CACHE_PREF_KEY = "bEpicViewer:ramCache:v1";
+// v2: the default flipped from on to off, and the key moved with it so an
+// existing "1" from the old default doesn't silently keep caching enabled for
+// people who never chose it. Anyone who wants it back turns it on once.
+const RAM_CACHE_PREF_KEY = "bEpicViewer:ramCache:v2";
 
 const _videoRam        = new Map();   // url -> {blobUrl, bytes}; insertion order = LRU
 const _videoRamPending = new Map();   // url -> in-flight fetch promise
@@ -246,10 +249,12 @@ export const PlaybackMixin = {
 
     // ── RAM cache toggle ─────────────────────────────────────────────────────
 
-    isVideoRamCacheEnabled() { return this.videoRamCacheEnabled !== false; },
+    // Off unless the user turned it on. Caching whole clips is a speed/memory
+    // trade the viewer shouldn't make on someone's behalf.
+    isVideoRamCacheEnabled() { return this.videoRamCacheEnabled === true; },
 
     loadVideoRamCachePref() {
-        let on = true;
+        let on = false;
         try {
             const raw = window.localStorage.getItem(RAM_CACHE_PREF_KEY);
             if (raw !== null) on = raw === "1";
@@ -276,11 +281,31 @@ export const PlaybackMixin = {
         const btn = this.purgeRamBtn;
         if (!btn) return;
         const { clips, bytes, budget } = videoRamStats();
-        btn.classList.toggle("empty", clips === 0);
-        btn.title = clips === 0
-            ? "Purge video RAM cache — nothing cached right now"
-            : `Purge video RAM cache — ${clips} clip${clips === 1 ? "" : "s"}, ` +
-              `${this._formatRamBytes(bytes)} of ${this._formatRamBytes(budget)}`;
+        const thumbs = this._countThumbnailImages();
+        btn.classList.toggle("empty", clips === 0 && thumbs === 0);
+        const held = [];
+        if (clips) {
+            held.push(`${clips} clip${clips === 1 ? "" : "s"}, ` +
+                      `${this._formatRamBytes(bytes)} of ${this._formatRamBytes(budget)}`);
+        }
+        if (thumbs) held.push(`${thumbs} decoded thumbnail${thumbs === 1 ? "" : "s"}`);
+        btn.title = held.length === 0
+            ? "Purge viewer memory — nothing being held right now"
+            : `Purge viewer memory — ${held.join("; ")}`;
+    },
+
+    // Thumbnails actually holding a decoded bitmap. `complete && naturalWidth` is
+    // the difference that matters: a lazy <img> that hasn't scrolled into view has
+    // a src but has decoded nothing, so counting srcs would report memory the
+    // viewer isn't using and leave the purge button looking permanently full.
+    _countThumbnailImages() {
+        const strip = this.historyStrip;
+        if (!strip || !strip.querySelectorAll) return 0;
+        let n = 0;
+        for (const img of strip.querySelectorAll("img")) {
+            if (img.complete && img.naturalWidth) n++;
+        }
+        return n;
     },
 
     toggleVideoRamCache() {
@@ -290,15 +315,10 @@ export const PlaybackMixin = {
         this._syncRamCacheButton();
 
         if (!this.videoRamCacheEnabled) {
-            const before = videoRamStats();
-            // Stop the browser pre-buffering the clips that are already loaded —
-            // dropping our copy while it keeps slurping the whole file into its own
-            // buffer is why turning this off looked like it changed nothing.
-            [this.videoBase, this.videoCompare].forEach((v) => { if (v) v.preload = "metadata"; });
-            this._releaseVideoRam();
-            this._notify(before.clips
-                ? `Video RAM cache off — ${this._formatRamBytes(before.bytes)} released`
-                : "Video RAM cache off — clips now stream from the server");
+            // Turning it off releases everything, not just future clips — the same
+            // full release the purge button performs.
+            const freed = this._releaseAllRam();
+            this._notify(`Video RAM cache off — ${this._describeFreed(freed)}`);
         } else {
             // Re-run the source setup for whatever is on screen so the current
             // clips get pulled into RAM straight away instead of only the next one.
@@ -317,6 +337,57 @@ export const PlaybackMixin = {
     // clear — and so eviction and targeted drops get the same protection.
     _releaseVideoRam() {
         clearVideoRamCache();
+    },
+
+    // Everything the viewer is holding, in one place, so the purge button and the
+    // toggle can't drift apart on what "released" means. Three separate things
+    // accumulate, and freeing only the first is why purging looked inert:
+    //
+    //   1. cached clips — blob copies of whole video files
+    //   2. the browser's own pre-buffer for the <video> elements on screen
+    //   3. decoded history thumbnails — one full-resolution <img> per snapshot,
+    //      up to 20 per tab, which is what grows with every render
+    //
+    // What it cannot free is the browser's HTTP cache of frames already
+    // downloaded. No page can evict that; only a reload does.
+    _releaseAllRam() {
+        const before = videoRamStats();
+        // Stop the browser pre-buffering what's on screen — dropping our copy
+        // while it keeps slurping the whole file into its own buffer is why
+        // turning this off looked like it changed nothing.
+        [this.videoBase, this.videoCompare].forEach((v) => { if (v) v.preload = "metadata"; });
+        this._releaseVideoRam();
+        const thumbs = this._releaseThumbnailImages();
+        this._invalidateCacheBar();
+        this.updateCacheBar();
+        this._syncRamCacheButton();
+        return { clips: before.clips, bytes: before.bytes, thumbs };
+    },
+
+    // Drop the decoded bitmaps behind the history strip. Rebuilding it discards
+    // the old <img> elements outright, which is what actually frees them — a
+    // still-attached element keeps its decode alive no matter what the caches do.
+    // The replacements load lazily, so only the thumbnails genuinely on screen
+    // decode again instead of all twenty.
+    _releaseThumbnailImages() {
+        const n = this._countThumbnailImages();
+        if (n > 0 && this.renderHistoryPanel) {
+            this._historyPanelSig = null;
+            this.renderHistoryPanel();
+        }
+        return n;
+    },
+
+    _describeFreed(freed) {
+        const parts = [];
+        if (freed.clips) {
+            parts.push(`${freed.clips} clip${freed.clips === 1 ? "" : "s"} (${this._formatRamBytes(freed.bytes)})`);
+        }
+        if (freed.thumbs) {
+            parts.push(`${freed.thumbs} thumbnail${freed.thumbs === 1 ? "" : "s"}`);
+        }
+        if (parts.length === 0) return "nothing was being held";
+        return `released ${parts.join(" and ")}`;
     },
 
     // Called by the cache for each blob about to be revoked. A <video> still
@@ -365,17 +436,13 @@ export const PlaybackMixin = {
         return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
     },
 
-    // Toolbar button: drop every cached clip, keeping playback alive.
+    // Toolbar button: hand back everything, keeping playback alive.
     purgeVideoRam() {
-        const before = videoRamStats();
-        this._releaseVideoRam();
-        this._invalidateCacheBar();
-        this.updateCacheBar();
-        this._syncRamCacheButton();
-        this._notify(before.clips
-            ? `Purged ${before.clips} clip${before.clips === 1 ? "" : "s"} — ${this._formatRamBytes(before.bytes)} freed`
-            : "Nothing was cached — no video memory to free");
-        return before;
+        const freed = this._releaseAllRam();
+        this._notify(freed.clips || freed.thumbs
+            ? `Purged — ${this._describeFreed(freed)}`
+            : "Nothing was being held — no viewer memory to free");
+        return freed;
     },
 
     // Every URL a frame array refers to, posters included — a video's thumbnail is
@@ -835,8 +902,11 @@ export const PlaybackMixin = {
         imgEl.onerror = () => { if (this.noteMediaLoadFailed) this.noteMediaLoadFailed(); };
         imgEl.onload = () => {
             // A frame that decoded once is in the browser's image cache — record
-            // it so the timeline can show which part of a sequence is local.
-            _markFrameLoaded(url);
+            // it so the timeline can show which part of a sequence is local. Only
+            // while caching is on: with it off the viewer claims to hold nothing,
+            // and a set that kept growing anyway both contradicted that and left
+            // the green bar lit over an empty cache.
+            if (this.isVideoRamCacheEnabled()) _markFrameLoaded(url);
             if (this.updateCacheBar) this.updateCacheBar();
             if (onLoadCallback) onLoadCallback();
         };
@@ -848,7 +918,7 @@ export const PlaybackMixin = {
         // the media it replaced. URLs are stable for path-based frames, so this is
         // the normal case when re-showing a frame, not a rare one.
         if (imgEl.complete && imgEl.naturalWidth) {
-            _markFrameLoaded(url);
+            if (this.isVideoRamCacheEnabled()) _markFrameLoaded(url);
             if (onLoadCallback) onLoadCallback();
         }
     },
@@ -904,6 +974,17 @@ export const PlaybackMixin = {
     updateCacheBar() {
         const bar = this.cacheBar;
         if (!bar) return;
+        // The bar reports what the RAM cache is holding, so with the cache off it
+        // has nothing to say. A video's buffered ranges are still real browser
+        // memory, but showing them here read as "still caching" against a toggle
+        // that was switched off.
+        if (!this.isVideoRamCacheEnabled()) {
+            bar.style.display = 'none';
+            bar.innerHTML = '';
+            this._cacheBarSig = null;
+            this._cacheBarGuard = null;
+            return;
+        }
         const imgCount = this.getImgCount();
         const bounds   = this.getTimelineBounds(imgCount);
         const span     = bounds.max - bounds.min;

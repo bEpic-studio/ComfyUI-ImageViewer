@@ -356,6 +356,14 @@ export const HistoryMixin = {
 
             const imgEl = document.createElement('img');
             if (imgObj) {
+                // An image snapshot has no separate poster, so this <img> points at
+                // the full-resolution render — and a decoded bitmap stays resident
+                // for as long as the element is attached. Twenty of those per tab,
+                // one more with every render, was the memory that kept climbing.
+                // Lazy means only the thumbnails actually scrolled into view pay
+                // for a decode; the rest cost nothing until you look at them.
+                imgEl.loading  = 'lazy';
+                imgEl.decoding = 'async';
                 // A thumbnail is only a hint that something is wrong — a video's
                 // poster is a separate temp file, so it can be gone while the clip
                 // itself is fine. The prune pass checks the real media before

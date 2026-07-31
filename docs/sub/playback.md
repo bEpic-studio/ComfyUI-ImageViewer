@@ -52,20 +52,32 @@ Each clip is read into memory once and played from there, so the decoder never w
 
 ### RAM Cache Toggle
 
-The **memory-stick** button in the playback toolbar turns the cache on and off. It is **on** by default and lit orange; dimmed means off. The setting persists across reloads.
+The **memory-stick** button in the playback toolbar turns the cache on and off. It is **off** by default — trading memory for smoothness is your call, not the viewer's. Lit orange means on, dimmed means off, and the setting persists across reloads.
 
-Turn it off when you would rather keep the memory than the smoothness — reviewing very large clips, or working alongside something else that needs the RAM. Switching it off releases everything held immediately, without interrupting whatever is playing; switching it back on pulls the clip on screen into memory straight away rather than waiting for the next one.
+Turn it on when you are reviewing a clip repeatedly and want scrubbing to stop hitting the server. Turn it off when you would rather keep the memory — large clips, or working alongside something else that needs the RAM.
+
+Switching it **off releases everything the viewer is holding**, immediately and without interrupting whatever is playing — the same full release the purge button performs (see below). Switching it back on pulls the clip on screen into memory straight away rather than waiting for the next one.
 
 Off also stops the **browser** buffering whole clips of its own accord: clips are then loaded metadata-first and read in pieces as they play. That is the memory you were trying not to spend, so it is the point — but it also means scrubbing a streamed clip goes back to the server, which is exactly what caching exists to avoid.
 
-### Purge RAM
+### Purge Viewer Memory
 
-The **memory-stick with an ✕** button next to it empties the cache without turning caching off — the next clip you load is cached again as usual. Hover it to see what is resident right now (`3 clips, 240 MB of 1.50 GB`); it sits dimmed when there is nothing to purge. A short confirmation reports what was freed, so a purge that finds nothing cached says so rather than looking broken.
+The **memory-stick with an ✕** button next to it hands back everything without turning caching off — the next clip you load is cached again as usual. Hover it to see what is resident right now; it sits dimmed when there is nothing to purge. A short confirmation reports what was freed, so a purge that finds nothing says so rather than looking broken.
 
-Purging never interrupts playback: a clip playing from memory is pointed back at its streaming URL first, keeping its position and play state. It then keeps streaming rather than immediately re-reading the whole file — otherwise the memory would come straight back — so the clip on screen stays out of RAM until you load another one.
+Three separate things accumulate, and both the purge button and switching the toggle off release all three:
 
-> [!NOTE]
-> If the purge reports nothing cached while your browser is still holding gigabytes, the memory is not this cache. Decoded image sequences live in the browser's own image cache, which no extension can hand back — reloading the page (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>) is what clears that.
+| What | Why it adds up |
+|---|---|
+| Cached clips | Whole video files held as in-memory copies |
+| The browser's video pre-buffer | Set aside for the clips currently on screen |
+| Decoded history thumbnails | One full-resolution image per snapshot, up to 20 per tab — this is what grows with every render |
+
+Purging never interrupts playback: a clip playing from memory is pointed back at its streaming URL first, keeping its position and play state. It then keeps streaming rather than immediately re-reading the whole file — otherwise the memory would come straight back.
+
+History thumbnails load **lazily**, so only the ones actually scrolled into view decode at all, and the rest cost nothing until you look at them. After a purge the strip stays exactly as it was; the images simply decode again as you scroll.
+
+> [!IMPORTANT]
+> One thing no page can hand back is the **browser's own HTTP cache** of frames it has already downloaded. If memory keeps climbing while the purge button reports nothing held, that is what you are looking at, and only reloading the page (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>) clears it. The button's tooltip is the honest measure of what the viewer itself is holding.
 
 ### Clips Released Automatically
 
@@ -78,11 +90,13 @@ Cached clips are also handed back as soon as nothing refers to them, so a long s
 | **Clear History** (this tab, or all tabs) | Every clip those snapshots referenced |
 | A tab is closed, or its node is deleted | That tab's clip |
 
-A file that something else still points at — the live tab, or another snapshot — is always kept, so releasing memory can never cost you a clip you can still open. That means closing a tab whose history you kept releases nothing; use **Purge RAM** if you want the memory back regardless.
+A file that something else still points at — the live tab, or another snapshot — is always kept, so releasing memory can never cost you a clip you can still open. That means closing a tab whose history you kept releases nothing; use the purge button if you want the memory back regardless.
 
 ### Cached-Frame Bar
 
 A thin green bar along the top of the timeline shows which part of the current media is held locally and will therefore scrub and play without going back to the server.
+
+The bar reports what the **RAM cache** is holding, so it is hidden entirely while the cache is switched off — a lit bar over an empty cache would say the opposite of what the toggle does.
 
 | Media | What the bar shows |
 |---|---|
