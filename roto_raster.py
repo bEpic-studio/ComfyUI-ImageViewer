@@ -1,9 +1,16 @@
 """
 roto_raster.py — rasterize bEpic Viewer roto data into a MASK tensor.
 
-The viewer's Roto tool serializes shapes as normalized ([0,1]) coordinates so
-the matte is resolution independent.  This module turns that JSON into a float
-mask batch [N, H, W] at the resolution of the node's input image.
+The viewer's Roto tool serializes shapes as coordinates normalized against the
+image — (0,0) its top-left, (1,1) its bottom-right — so the matte is resolution
+independent.  This module turns that JSON into a float mask batch [N, H, W] at
+the resolution of the node's input image.
+
+Coordinates are NOT restricted to [0,1]: a vertex, tangent or feather point may
+sit outside the image.  Such a shape is simply cropped to the frame (PIL clips
+the scan-fill to the canvas), which keeps the true slope of every edge that
+crosses the border — clamping the point onto the border instead would bend the
+curve either side of it.
 
 Design notes / approximations (documented so callers know the fidelity):
   * Bezier segments are tessellated to line segments then scan-filled by PIL.

@@ -2,7 +2,13 @@
 // RotoMixin — the in-viewer Roto tool (modelled on Nuke's Roto node).
 //
 // Data model (serialized to the send-node's roto_data widget, consumed by
-// roto_raster.py). All coordinates are normalized [0,1] relative to the image:
+// roto_raster.py). All coordinates are normalized against the image, where
+// (0,0) is its top-left and (1,1) its bottom-right — but they are NOT clamped
+// to that range. A vertex, tangent or feather point may sit outside the frame;
+// the matte is simply cropped to the image resolution when it is rasterized
+// (PIL clips the scan-fill, and the preview is clipped to the same rect by
+// _rotoImageClipId). Clamping instead would drag an outside vertex onto the
+// border and visibly change the curve of the edges either side of it.
 //   layer = {
 //     id, name, visible, invert, feather, blur, dilate, opacity, closed:true,
 //     transform:{tx,ty,rot,sx,sy,px,py},
@@ -21,7 +27,6 @@ import { readToolStore, writeToolStore, ROTO_WIDGET } from "./bEpicViewer_nodeTo
 
 const HIT = 9;             // screen-px hit radius
 const DEF_TF = () => ({ tx: 0, ty: 0, rot: 0, sx: 1, sy: 1, px: 0.5, py: 0.5 });
-const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 const num = (v, d = 0) => (isFinite(+v) ? +v : d);
 
@@ -859,10 +864,16 @@ export const RotoMixin = {
         const dilImg     = (+layer.dilate || 0) + (+this._roto.global.dilate || 0);
         const dilScr     = Math.min(60, Math.abs(dilImg) * spp);
 
-        let parent = draw;
+        // Clip and filter go on the same <g>: SVG applies the filter first and
+        // clips its result, so softening that spills past the image edge is
+        // cropped exactly the way roto_raster.py crops it (it blurs an already
+        // cropped array). Order matters — clipping first would fade the matte
+        // out at the frame border instead of cutting it off there.
+        const attrs = {};
+        const clipId = this._rotoImageClipId();
+        if (clipId) attrs["clip-path"] = `url(#${clipId})`;
         if (sigmaScr > 0.3 || dilScr >= 1) {
-            let defs = draw.querySelector("defs.bepic-rf-defs");
-            if (!defs) { defs = svgEl("defs", { class: "bepic-rf-defs" }); draw.appendChild(defs); }
+            const defs = this._rotoDefs();
             const fid = "bepic-rf-" + (layer.id || "x");
             const filt = svgEl("filter", { id: fid, x: "-60%", y: "-60%", width: "220%", height: "220%" });
             let src = "SourceGraphic";
@@ -875,9 +886,10 @@ export const RotoMixin = {
             }
             if (sigmaScr > 0.3) filt.appendChild(svgEl("feGaussianBlur", { in: src, stdDeviation: sigmaScr.toFixed(2) }));
             defs.appendChild(filt);
-            parent = svgEl("g", { filter: `url(#${fid})` });
-            draw.appendChild(parent);
+            attrs.filter = `url(#${fid})`;
         }
+        const parent = svgEl("g", attrs);
+        draw.appendChild(parent);
 
         const base = "255,120,0";
         if (layer.invert) {
@@ -985,11 +997,39 @@ export const RotoMixin = {
         return (o && ex && w > 0) ? (Math.hypot(ex.x - o.x, ex.y - o.y) / w) : 0;
     },
 
-    // Screen-space path of the image rectangle (for inverted-matte previews).
+    // Screen-space path of the image rectangle (for inverted-matte previews and
+    // the preview clip). Four corners rather than a rect so it follows whatever
+    // transform the image frame carries.
     _rotoFrameRectD() {
         const c = [this._normToDraw(0, 0), this._normToDraw(1, 0), this._normToDraw(1, 1), this._normToDraw(0, 1)];
         if (c.some((p) => !p)) return null;
         return `M ${c[0].x} ${c[0].y} L ${c[1].x} ${c[1].y} L ${c[2].x} ${c[2].y} L ${c[3].x} ${c[3].y} Z`;
+    },
+
+    // Shared <defs> for the preview's filters and clip. _toolRedraw wipes the
+    // draw layer every frame, so these are rebuilt per redraw rather than reused.
+    _rotoDefs() {
+        const draw = this._toolDraw;
+        let defs = draw.querySelector("defs.bepic-rf-defs");
+        if (!defs) { defs = svgEl("defs", { class: "bepic-rf-defs" }); draw.appendChild(defs); }
+        return defs;
+    },
+
+    // A clipPath of the image rectangle. Vertices may sit outside the frame, but
+    // the mask roto_raster.py produces is cropped to the image resolution — so
+    // the preview is clipped to match instead of spilling across the viewport.
+    // Returns null when the image rect can't be mapped (nothing on screen).
+    _rotoImageClipId() {
+        const d = this._rotoFrameRectD();
+        if (!d) return null;
+        const id = "bepic-roto-clip";
+        const defs = this._rotoDefs();
+        if (!defs.querySelector("#" + id)) {
+            const cp = svgEl("clipPath", { id });
+            cp.appendChild(svgEl("path", { d }));
+            defs.appendChild(cp);
+        }
+        return id;
     },
 
     // Oriented box around the current multi-point selection. It carries the
@@ -1108,8 +1148,10 @@ export const RotoMixin = {
             }
         }
 
-        // Add a point; drag to pull out symmetric bezier handles.
-        const raw = this._rotoInvTf({ x: clamp01(n.x), y: clamp01(n.y) }, layer.transform);
+        // Add a point; drag to pull out symmetric bezier handles. Coordinates are
+        // deliberately not clamped to [0,1] — a vertex may sit outside the image
+        // (see the note on the data model at the top of this file).
+        const raw = this._rotoInvTf(n, layer.transform);
         const pt = { x: raw.x, y: raw.y };
         pts.push(pt);
         this._toolRedraw();
@@ -1359,7 +1401,7 @@ export const RotoMixin = {
                 moved = true;
                 for (const i of this._roto.selPts) {
                     const o = origin[i]; if (!o) continue;
-                    editPts[i].x = clamp01(o.x + dx); editPts[i].y = clamp01(o.y + dy);
+                    editPts[i].x = o.x + dx; editPts[i].y = o.y + dy;
                     for (const hk of ["cin", "cout"]) {
                         if (o[hk]) editPts[i][hk] = { x: o[hk].x + dx, y: o[hk].y + dy };
                     }
@@ -1454,7 +1496,7 @@ export const RotoMixin = {
         for (const i of cap.sel) {
             const o = cap.orig[i]; if (!o) continue;
             const nn = back(map(o.a));
-            editPts[i].x = clamp01(nn.x); editPts[i].y = clamp01(nn.y);
+            editPts[i].x = nn.x; editPts[i].y = nn.y;
             for (const hk of ["cin", "cout"]) {
                 if (o[hk]) editPts[i][hk] = back(map(o[hk]));
             }
