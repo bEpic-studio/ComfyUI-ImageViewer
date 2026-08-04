@@ -4,6 +4,7 @@
 import { api } from "../../scripts/api.js";
 import { app } from "../../scripts/app.js";
 import { resolveViewerAction, viewerHelpRows } from "./bEpicViewer_keymap.js";
+import { isViewerSourceNode, senderTabInfo } from "./bEpicViewer_nodeTools.js";
 
 export const UIMixin = {
 
@@ -428,20 +429,9 @@ export const UIMixin = {
         const nodes = graph._nodes || graph.nodes || [];
         nodes.forEach(n => {
             if (!n) return;
-            if (n.type === 'bEpicSendToViewer') {
-                let val = '';
-                try {
-                    const w = (n.widgets || []).find(w => w.name === 'tab_name');
-                    val = w ? (w.value || '') : '';
-                } catch (e) {}
-                let fk;
-                if (val) {
-                    const safe = val.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '').trim();
-                    fk = `send_label_${safe || ('node_' + n.id)}`;
-                } else {
-                    fk = `send_${n.id}`;
-                }
-                if (fk === key) out.push(n);
+            if (isViewerSourceNode(n)) {
+                const info = senderTabInfo(n);
+                if (info && info.key === key) out.push(n);
             } else if (n.type === 'bEpicViewer' && key.startsWith('tab') && Array.isArray(n.inputs)) {
                 // Legacy multi-input viewer: tint the node feeding that input.
                 const idx = parseInt(key.replace('tab', ''), 10) - 1;

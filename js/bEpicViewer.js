@@ -15,7 +15,10 @@ import { RotoMixin }     from "./bEpicViewer_roto.js";
 import { AnnotateMixin } from "./bEpicViewer_annotate.js";
 import { DnDMixin }      from "./bEpicViewer_mixinDnD.js";
 import { SendFromNodeMixin, registerSendToViewerMenu } from "./bEpicViewer_sendFromNode.js";
-import { registerSendNode } from "./bEpicViewer_nodeTools.js";
+import {
+    registerSendNode, registerToolNode, senderTabInfo, isViewerSourceNode,
+    BEPIC_SEND_NODE, BEPIC_ROTO_NODE, BEPIC_SAM3_NODE,
+} from "./bEpicViewer_nodeTools.js";
 import { viewerCommands, viewerKeybindings, VIEWER_TARGET_ID } from "./bEpicViewer_keymap.js";
 
 let globalViewerPanel = null;
@@ -847,32 +850,13 @@ class ViewerPanel extends HTMLElement {
 
         Object.keys(data.tabs).forEach(k => {
             let finalKey = k;
-            if (senderNode && senderNode.type === "bEpicSendToViewer") {
-                // Explicit tab_name keeps grouping behavior. Empty tab_name creates
-                // one tab per SendToViewer node/input, while label comes from origin.
-                let explicitLabel = '';
-                try {
-                    const w = senderNode.widgets.find(w => w.name === 'tab_name');
-                    explicitLabel = w ? (w.value || '') : '';
-                } catch (e) {}
-
-                if (explicitLabel) {
-                    const safe = explicitLabel.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '').trim();
-                    finalKey = `send_label_${safe || ('node_' + senderNode.id)}`;
-                    this.tabLabels[finalKey] = explicitLabel;
-                } else {
-                    let derivedLabel = '';
-                    const linkedInput = senderNode.inputs.find(inp => inp.link);
-                    if (linkedInput) {
-                        const link = app.graph.links[linkedInput.link];
-                        if (link) {
-                            const originNode = app.graph.getNodeById(link.origin_id);
-                            derivedLabel = originNode ? (originNode.title || originNode.type || link.origin_id) : link.origin_id;
-                        }
-                    }
-                    finalKey = `send_${senderNode.id}`;
-                    this.tabLabels[finalKey] = derivedLabel || `Send ${senderNode.id}`;
-                }
+            // Every node that owns a tab — the send node and both tool nodes —
+            // keys it the same way (see senderTabInfo): an explicit tab_name
+            // groups them, an empty one gives the node a tab of its own.
+            const info = senderTabInfo(senderNode);
+            if (info) {
+                finalKey = info.key;
+                this.tabLabels[finalKey] = info.label;
                 this.tabSourceNodeIds[finalKey] = senderNode.id;
             }
 
@@ -928,17 +912,9 @@ class ViewerPanel extends HTMLElement {
         // are user-managed and never auto-removed.
         const expected = new Set();
         app.graph.nodes.forEach(n => {
-            if (n.type === 'bEpicSendToViewer') {
-                try {
-                    const w           = n.widgets.find(w => w.name === 'tab_name');
-                    const val         = w ? (w.value || '') : '';
-                    if (val) {
-                        const safe = val.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '').trim();
-                        expected.add(`send_label_${safe || ('node_' + n.id)}`);
-                    } else {
-                        expected.add(`send_${n.id}`);
-                    }
-                } catch (e) {}
+            if (isViewerSourceNode(n)) {
+                const info = senderTabInfo(n);
+                if (info) expected.add(info.key);
             }
             if (n.type === 'bEpicViewer') {
                 n.inputs.forEach((inp, idx) => { if (inp.link) expected.add(`tab${idx + 1}`); });
@@ -1219,8 +1195,16 @@ app.registerExtension({
             registerBepicGetPath(nodeType);
         }
 
-        if (nodeData.name === "bEpicSendToViewer") {
+        if (nodeData.name === BEPIC_SEND_NODE) {
             registerSendNode(nodeType, nodeData);
+        }
+
+        if (nodeData.name === BEPIC_ROTO_NODE) {
+            registerToolNode(nodeType, nodeData, "roto");
+        }
+
+        if (nodeData.name === BEPIC_SAM3_NODE) {
+            registerToolNode(nodeType, nodeData, "sam3");
         }
 
         // Right-click → "Send to Image Viewer" on any node holding a media file

@@ -9,7 +9,50 @@
 Sends images to the Image Viewer. Lay down the node in the canvas, connect an image / mask to the node's input, and set the tab_name to any name you want.
 If you don't specify a name, the name of the connected node will be used.
 
-### Category
+Its only output is `image` — the input passed straight through.
+
+---
+
+## bEpic Image Viewer Roto
+
+Gives the viewer's **Roto** tool somewhere to put its matte.
+
+| | |
+|---|---|
+| Input | `image` — the picture to roto over |
+| Output | `roto_mask` (MASK) |
+
+It opens a tab exactly like Send To Image Viewer, so the frames you are drawing over are the frames the mask is rasterized against. The shapes themselves are stored on the node, in a widget the viewer keeps hidden, which means they travel with the workflow.
+
+The `roto_mask` output is there from the moment you drop the node in, so you can wire the graph up before drawing anything. An empty node yields a black matte at the input's resolution.
+
+There is no image output. The picture is already on screen; a node that carries only its matte is unambiguous about what it is for.
+
+---
+
+## bEpic Image Viewer SAM3 Collector
+
+Gives the viewer's **SAM3 points** and **SAM3 boxes** tools somewhere to put their prompts. One node carries both kinds.
+
+| | |
+|---|---|
+| Input | `image` — the picture to place prompts on |
+| Outputs | `positive_points`, `negative_points` (SAM3_POINTS_PROMPT)<br>`positive_bboxes`, `negative_bboxes` (SAM3_BOXES_PROMPT) |
+
+Shaped to match ComfyUI-SAM3's own collectors, so they drop straight into a SAM3 graph. All four outputs exist from the start; one you never touch is simply an empty prompt, which SAM3 reads as "no hint of this kind". Like the Roto node it has no image output.
+
+---
+
+## Adding the tool nodes from the viewer
+
+You do not have to lay these down by hand. The **Roto** and **SAM3** buttons in the viewer are always available: press one over a tab that isn't already a tool tab and the matching node is added to the graph and wired to the image that tab is showing. Press it again later and you get the same node back rather than a second one.
+
+Two details worth knowing:
+
+- Doing this from a Roto tab wires the new node to the image feeding the Roto node, not to the Roto node itself — the tool nodes emit mattes and prompts, never pictures, so they can't be chained.
+- A tab no node in the graph feeds — an opened folder, a dropped file — has nothing to wire to, and the tool panel says so instead of offering the button.
+
+The new node gets a viewer tab of its own the next time the workflow runs.
 
 ---
 

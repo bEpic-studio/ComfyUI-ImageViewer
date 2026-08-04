@@ -109,6 +109,122 @@ def _boxes_prompt(json_str, positive):
     return {"boxes": boxes, "labels": labels}
 
 
+def _roto_mask(roto_data, N, H, W):
+    """Rasterize a roto_data JSON string to a MASK batch [N,H,W].
+
+    An empty / unparseable store, or a missing rasterizer, yields a black matte
+    of the right shape rather than an error — an unused Roto node should be
+    harmless to leave wired up."""
+    roto_obj = None
+    if roto_data and roto_data.strip():
+        try:
+            roto_obj = json.loads(roto_data)
+        except Exception:
+            roto_obj = None
+
+    if roto_obj and roto_raster is not None:
+        try:
+            mask_np = roto_raster.rasterize(roto_obj, W, H, N)
+        except Exception:
+            mask_np = np.zeros((N, H, W), dtype=np.float32)
+    else:
+        mask_np = np.zeros((N, H, W), dtype=np.float32)
+    return torch.from_numpy(np.ascontiguousarray(mask_np)).float()
+
+
+def _temp_frames(inp, label, unique_id, out_dir, temp_type):
+    """Write every frame of `inp` to a temp PNG and return viewer frame dicts.
+
+    Colour images and single-channel masks are told apart by looking for an axis
+    of 3 or 4, so a MASK batch previews as greyscale instead of failing."""
+    if inp is None:
+        return []
+    batch_results = []
+
+    try:
+        samples = inp
+        for i, tensor in enumerate(samples):
+            t = tensor
+            arr = t.cpu().numpy()
+
+            # Detect if this array contains 3 or 4 color channels on any axis
+            chan_axis = None
+            for ax, s in enumerate(arr.shape):
+                if s in (3, 4):
+                    chan_axis = ax
+                    break
+
+            if chan_axis is not None and arr.ndim >= 2:
+                try:
+                    # Move channel axis to last to get H,W,C
+                    if chan_axis != arr.ndim - 1:
+                        img_arr = np.moveaxis(arr, chan_axis, -1)
+                    else:
+                        img_arr = arr
+
+                    # If there's a leading batch dimension, squeeze it
+                    if img_arr.ndim == 4 and img_arr.shape[0] == 1:
+                        img_arr = img_arr[0]
+
+                    array = 255.0 * img_arr
+                    img = Image.fromarray(np.clip(array, 0, 255).astype(np.uint8))
+                    # Convert RGBA → RGB so PNG saves in full colour
+                    if img.mode == 'RGBA':
+                        img = img.convert('RGB')
+                    safe_label = label if label else "send"
+                    filename = f"bEpic_S_{unique_id}_{safe_label}_{i:04d}_{random.randint(1,1000)}.png"
+                    img.save(os.path.join(out_dir, filename), compress_level=4)
+                    full = os.path.abspath(os.path.join(out_dir, filename))
+                    batch_results.append({"filename": filename, "subfolder": "", "type": temp_type, "path": full})
+                except Exception:
+                    continue
+            else:
+                try:
+                    mask_arr = arr
+                    if mask_arr.ndim == 3 and mask_arr.shape[0] == 1:
+                        mask_arr = mask_arr[0]
+                    if mask_arr.ndim == 3 and mask_arr.shape[-1] == 1:
+                        mask_arr = mask_arr[..., 0]
+                    mask_arr = (255.0 * mask_arr).astype(np.uint8)
+                    mask_img = Image.fromarray(np.clip(mask_arr, 0, 255).astype(np.uint8)).convert('L')
+                    safe_label = label if label else "send"
+                    mask_filename = f"bEpic_S_{unique_id}_{safe_label}_{i:04d}_{random.randint(1,1000)}_mask.png"
+                    mask_img.save(os.path.join(out_dir, mask_filename), compress_level=4)
+                    full = os.path.abspath(os.path.join(out_dir, mask_filename))
+                    batch_results.append({"filename": mask_filename, "subfolder": "", "type": "mask", "path": full})
+                except Exception:
+                    continue
+    except Exception:
+        return []
+    return batch_results
+
+
+def _push_tab(inp, tab_name, unique_id, node_label):
+    """Show `inp` in its own viewer tab, as a preview only.
+
+    This is the tool nodes' whole viewer story: they never persist anything, so
+    a native VIDEO is decoded to a playable temp file and everything else lands
+    as temp PNGs. Saving frames to ./output stays bEpicSendToViewer's job."""
+    out_dir = folder_paths.get_temp_directory()
+    label = tab_name.replace(" ", "_") if tab_name else "send"
+
+    frames = None
+    if file_writer is not None and file_writer.is_video_input(inp):
+        try:
+            _saved, frames = file_writer.write_video_input(
+                inp, False, "bEpic", "mp4", 24.0)
+        except Exception as e:
+            print(f"\033[91m[{node_label}] video input failed: {e}\033[0m")
+            frames = None
+    if not frames:
+        frames = _temp_frames(inp, label, unique_id, out_dir, "temp")
+
+    PromptServer.instance.send_sync("bepic.viewer.update", {
+        "tabs": {"tab": frames},
+        "unique_id": unique_id,
+    })
+
+
 def _history_images(saved_paths):
     """Turn absolute ./output file paths (from file_writer) into ComfyUI history
     image dicts {filename, subfolder, type:"output"}.
@@ -165,16 +281,6 @@ class bEpicSendToViewer:
                                   "bepic_video_formats": _VIDEO_FORMATS}),
                 "filename_prefix": ("STRING", {"default": "bEpic"}),
             },
-            "optional": {
-                # Hidden (via JS) stores written by the in-viewer tools. Kept as
-                # widgets so their values serialize into the workflow and reach
-                # the backend on execute.
-                "roto_data":     ("STRING", {"default": "", "multiline": False}),
-                "sam3_positive": ("STRING", {"default": "[]", "multiline": False}),
-                "sam3_negative": ("STRING", {"default": "[]", "multiline": False}),
-                "sam3_box_positive": ("STRING", {"default": "[]", "multiline": False}),
-                "sam3_box_negative": ("STRING", {"default": "[]", "multiline": False}),
-            },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
                 "prompt": "PROMPT",
@@ -182,86 +288,18 @@ class bEpicSendToViewer:
             },
         }
 
-    # image passthrough + roto matte + SAM3 point prompts. The JS only reveals
-    # the optional output slots once the corresponding viewer tool is used, but
-    # the tuple returned here always matches this fixed order/length so ComfyUI
-    # can map outputs by index.
-    RETURN_TYPES = (_ANY, "MASK", "SAM3_POINTS_PROMPT", "SAM3_POINTS_PROMPT",
-                    "SAM3_BOXES_PROMPT", "SAM3_BOXES_PROMPT")
-    RETURN_NAMES = ("image", "roto_mask", "positive_points", "negative_points",
-                    "positive_bboxes", "negative_bboxes")
+    # Straight passthrough. The in-viewer tools used to hang their outputs off
+    # this node; they now live on bEpicImageViewerRoto and
+    # bEpicImageViewerSAM3Collector, which carry their own image input and tab.
+    RETURN_TYPES = (_ANY, )
+    RETURN_NAMES = ("image", )
     FUNCTION = "send"
     OUTPUT_NODE = True
     CATEGORY = "image/bEpic"
 
     def send(self, input, tab_name="", save_to_output=False,
              file_format="png", fps=24.0, filename_prefix="bEpic",
-             roto_data="", sam3_positive="[]", sam3_negative="[]",
-             sam3_box_positive="[]", sam3_box_negative="[]",
              unique_id=None, prompt=None, extra_pnginfo=None):
-        # ── 1. Save incoming tensors to temp PNGs and push to the viewer ──────
-        def process_batch(inp, label):
-            if inp is None:
-                return []
-            batch_results = []
-
-            try:
-                samples = inp
-                for i, tensor in enumerate(samples):
-                    t = tensor
-                    arr = t.cpu().numpy()
-
-                    # Detect if this array contains 3 or 4 color channels on any axis
-                    chan_axis = None
-                    for ax, s in enumerate(arr.shape):
-                        if s in (3, 4):
-                            chan_axis = ax
-                            break
-
-                    if chan_axis is not None and arr.ndim >= 2:
-                        try:
-                            # Move channel axis to last to get H,W,C
-                            if chan_axis != arr.ndim - 1:
-                                img_arr = np.moveaxis(arr, chan_axis, -1)
-                            else:
-                                img_arr = arr
-
-                            # If there's a leading batch dimension, squeeze it
-                            if img_arr.ndim == 4 and img_arr.shape[0] == 1:
-                                img_arr = img_arr[0]
-
-                            array = 255.0 * img_arr
-                            img = Image.fromarray(np.clip(array, 0, 255).astype(np.uint8))
-                            # Convert RGBA → RGB so PNG saves in full colour
-                            if img.mode == 'RGBA':
-                                img = img.convert('RGB')
-                            safe_label = label if label else f"send"
-                            filename = f"bEpic_S_{unique_id}_{safe_label}_{i:04d}_{random.randint(1,1000)}.png"
-                            img.save(os.path.join(self.output_dir, filename), compress_level=4)
-                            full = os.path.abspath(os.path.join(self.output_dir, filename))
-                            batch_results.append({"filename": filename, "subfolder": "", "type": self.type, "path": full})
-                        except Exception:
-                            continue
-                    else:
-                        try:
-                            mask_arr = arr
-                            if mask_arr.ndim == 3 and mask_arr.shape[0] == 1:
-                                mask_arr = mask_arr[0]
-                            if mask_arr.ndim == 3 and mask_arr.shape[-1] == 1:
-                                mask_arr = mask_arr[..., 0]
-                            mask_arr = (255.0 * mask_arr).astype(np.uint8)
-                            mask_img = Image.fromarray(np.clip(mask_arr, 0, 255).astype(np.uint8)).convert('L')
-                            safe_label = label if label else f"send"
-                            mask_filename = f"bEpic_S_{unique_id}_{safe_label}_{i:04d}_{random.randint(1,1000)}_mask.png"
-                            mask_img.save(os.path.join(self.output_dir, mask_filename), compress_level=4)
-                            full = os.path.abspath(os.path.join(self.output_dir, mask_filename))
-                            batch_results.append({"filename": mask_filename, "subfolder": "", "type": "mask", "path": full})
-                        except Exception:
-                            continue
-            except Exception:
-                return []
-            return batch_results
-
         safe_label = tab_name.replace(" ", "_") if tab_name else "send"
 
         # Three source kinds feed the viewer tab:
@@ -292,7 +330,8 @@ class bEpicSendToViewer:
                 print(f"\033[91m[bEpicSendToViewer] save to output failed: {e}\033[0m")
                 tab_frames = None
         if tab_frames is None:
-            tab_frames = process_batch(input, safe_label)
+            tab_frames = _temp_frames(input, safe_label, unique_id,
+                                      self.output_dir, self.type)
 
         tabs = {"tab": tab_frames}
 
@@ -301,33 +340,7 @@ class bEpicSendToViewer:
             "unique_id": unique_id
         })
 
-        # ── 2. Build the tool outputs ────────────────────────────────────────
-        N, H, W = _dims_from_input(input)
-
-        roto_obj = None
-        if roto_data and roto_data.strip():
-            try:
-                roto_obj = json.loads(roto_data)
-            except Exception:
-                roto_obj = None
-
-        if roto_obj and roto_raster is not None:
-            try:
-                mask_np = roto_raster.rasterize(roto_obj, W, H, N)
-            except Exception:
-                mask_np = np.zeros((N, H, W), dtype=np.float32)
-        else:
-            mask_np = np.zeros((N, H, W), dtype=np.float32)
-        roto_mask = torch.from_numpy(np.ascontiguousarray(mask_np)).float()
-
-        positive_points = _points_prompt(sam3_positive, 1)
-        negative_points = _points_prompt(sam3_negative, 0)
-        positive_bboxes = _boxes_prompt(sam3_box_positive, True)
-        negative_bboxes = _boxes_prompt(sam3_box_negative, False)
-
-        # ── 3. Passthrough + tool outputs ────────────────────────────────────
-        result = (input, roto_mask, positive_points, negative_points,
-                  positive_bboxes, negative_bboxes)
+        result = (input, )
 
         # When save_to_output persisted files to ./output, record them in
         # ComfyUI's prompt history (like SaveImage) so they appear in the
@@ -338,12 +351,103 @@ class bEpicSendToViewer:
         return result
 
 
+class bEpicImageViewerRoto:
+    """Roto matte drawn in the viewer.
+
+    Shows its input in a viewer tab of its own, exactly as bEpicSendToViewer
+    does, and hands back the matte the viewer's Roto tool drew over that tab.
+    There is no image output: the picture is already on screen, and a node that
+    only carries a matte is unambiguous about what it is for.
+
+    `roto_data` is written by the viewer, not by hand — the JS keeps the widget
+    hidden. It stays a widget so the shapes serialize into the workflow and
+    travel with it."""
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image": (IO.ANY, ) if IO is not None else (("IMAGE", "MASK"),),
+                "tab_name": ("STRING", {"default": ""}),
+            },
+            "optional": {
+                "roto_data": ("STRING", {"default": "", "multiline": False}),
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+            },
+        }
+
+    RETURN_TYPES = ("MASK", )
+    RETURN_NAMES = ("roto_mask", )
+    FUNCTION = "run"
+    OUTPUT_NODE = True
+    CATEGORY = "image/bEpic"
+
+    def run(self, image, tab_name="", roto_data="", unique_id=None):
+        _push_tab(image, tab_name, unique_id, "bEpicImageViewerRoto")
+        N, H, W = _dims_from_input(image)
+        return (_roto_mask(roto_data, N, H, W), )
+
+
+class bEpicImageViewerSAM3Collector:
+    """SAM3 point and box prompts placed in the viewer.
+
+    Shows its input in a viewer tab of its own and hands back the prompts the
+    viewer's SAM3 tools placed over that tab, shaped for ComfyUI-SAM3. All four
+    outputs exist from the moment the node is created; an untouched one is
+    simply an empty prompt, which SAM3 treats as "no hint of this kind".
+
+    Like the Roto node it has no image output, and its four stores are written
+    by the viewer through hidden widgets."""
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image": (IO.ANY, ) if IO is not None else (("IMAGE", "MASK"),),
+                "tab_name": ("STRING", {"default": ""}),
+            },
+            "optional": {
+                "sam3_positive": ("STRING", {"default": "[]", "multiline": False}),
+                "sam3_negative": ("STRING", {"default": "[]", "multiline": False}),
+                "sam3_box_positive": ("STRING", {"default": "[]", "multiline": False}),
+                "sam3_box_negative": ("STRING", {"default": "[]", "multiline": False}),
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+            },
+        }
+
+    RETURN_TYPES = ("SAM3_POINTS_PROMPT", "SAM3_POINTS_PROMPT",
+                    "SAM3_BOXES_PROMPT", "SAM3_BOXES_PROMPT")
+    RETURN_NAMES = ("positive_points", "negative_points",
+                    "positive_bboxes", "negative_bboxes")
+    FUNCTION = "run"
+    OUTPUT_NODE = True
+    CATEGORY = "image/bEpic"
+
+    def run(self, image, tab_name="", sam3_positive="[]", sam3_negative="[]",
+            sam3_box_positive="[]", sam3_box_negative="[]", unique_id=None):
+        _push_tab(image, tab_name, unique_id, "bEpicImageViewerSAM3Collector")
+        return (
+            _points_prompt(sam3_positive, 1),
+            _points_prompt(sam3_negative, 0),
+            _boxes_prompt(sam3_box_positive, True),
+            _boxes_prompt(sam3_box_negative, False),
+        )
+
+
 # mapping dictionaries for external use (nodes.py imports these)
 
 NODE_CLASS_MAPPINGS = {
     "bEpicSendToViewer": bEpicSendToViewer,
+    "bEpicImageViewerRoto": bEpicImageViewerRoto,
+    "bEpicImageViewerSAM3Collector": bEpicImageViewerSAM3Collector,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "bEpicSendToViewer": "bEpic Send To Image Viewer",
+    "bEpicImageViewerRoto": "bEpic Image Viewer Roto",
+    "bEpicImageViewerSAM3Collector": "bEpic Image Viewer SAM3 Collector",
 }

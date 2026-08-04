@@ -1,35 +1,62 @@
 // bEpicViewer_nodeTools.js
-// Node-side glue for the in-viewer tools (Roto + SAM3 points).
+// Node-side glue for every node type that owns a viewer tab, and for the two
+// that also carry an in-viewer tool.
 //
-// The bEpicSendToViewer node carries hidden STRING widgets that the viewer's
-// tools write into:
-//     roto_data          – serialized roto layers        (JSON)
-//     sam3_positive      – normalized points [{x,y},...]  (JSON)
-//     sam3_negative      – normalized points [{x,y},...]  (JSON)
-//     sam3_box_positive  – normalized boxes [{x1,y1,x2,y2},...] (JSON)
-//     sam3_box_negative  – normalized boxes [{x1,y1,x2,y2},...] (JSON)
+//     bEpicSendToViewer              – plain passthrough preview
+//     bEpicImageViewerRoto           – + roto_mask
+//     bEpicImageViewerSAM3Collector  – + SAM3 point / box prompts
 //
-// Its Python RETURN_TYPES are fixed at:
-//     0 image | 1 roto_mask | 2 positive_points | 3 negative_points
-//   | 4 positive_bboxes | 5 negative_bboxes
-// but we collapse the node to just `image` on creation and only *reveal* the
-// optional outputs (contiguously, so backend indices stay aligned) once a tool
-// has actually produced data — the "appear when used" behaviour.
+// The two tool nodes carry hidden STRING widgets that the viewer's tools write:
+//     roto_data          – serialized roto layers                  (JSON)
+//     sam3_positive      – normalized points [{x,y},...]           (JSON)
+//     sam3_negative      – normalized points [{x,y},...]           (JSON)
+//     sam3_box_positive  – normalized boxes [{x1,y1,x2,y2},...]    (JSON)
+//     sam3_box_negative  – normalized boxes [{x1,y1,x2,y2},...]    (JSON)
+//
+// Their outputs are fixed and present from the moment the node is created.
+// These used to be optional slots on bEpicSendToViewer that appeared once a
+// tool had been used; a node that *is* the matte has nothing to reveal on
+// demand, and having the slot there up front means you can wire the graph
+// before drawing a single point.
 
 import { app } from "../../scripts/app.js";
 
 export const BEPIC_SEND_NODE = "bEpicSendToViewer";
+export const BEPIC_ROTO_NODE = "bEpicImageViewerRoto";
+export const BEPIC_SAM3_NODE = "bEpicImageViewerSAM3Collector";
+
+// Tool kind → node type. The SAM3 points and boxes tools share one collector.
+export const TOOL_NODE_TYPES = { roto: BEPIC_ROTO_NODE, sam3: BEPIC_SAM3_NODE };
+const TOOL_NODE_KINDS = { [BEPIC_ROTO_NODE]: "roto", [BEPIC_SAM3_NODE]: "sam3" };
+
+// Every node type that pushes its input into a viewer tab.
+const SOURCE_NODES = [BEPIC_SEND_NODE, BEPIC_ROTO_NODE, BEPIC_SAM3_NODE];
+
 export const ROTO_WIDGET = "roto_data";
 export const SAM3_POS_WIDGET = "sam3_positive";
 export const SAM3_NEG_WIDGET = "sam3_negative";
 export const SAM3_BOX_POS_WIDGET = "sam3_box_positive";
 export const SAM3_BOX_NEG_WIDGET = "sam3_box_negative";
 
+const TOOL_WIDGETS = {
+    roto: [ROTO_WIDGET],
+    sam3: [SAM3_POS_WIDGET, SAM3_NEG_WIDGET, SAM3_BOX_POS_WIDGET, SAM3_BOX_NEG_WIDGET],
+};
+
 // "save to ./output" toggle and the config widgets it shows/hides.
 export const OUTPUT_TOGGLE = "save_to_output";
 export const FORMAT_WIDGET = "file_format";
 export const FPS_WIDGET    = "fps";
 export const OUTPUT_CFG_WIDGETS = [FORMAT_WIDGET, FPS_WIDGET, "filename_prefix"];
+
+export function isViewerSourceNode(node) {
+    return !!node && SOURCE_NODES.includes(node.type);
+}
+
+/** "roto" | "sam3" for a tool node, else null. */
+export function nodeToolKind(node) {
+    return (node && TOOL_NODE_KINDS[node.type]) || null;
+}
 
 // Which file_format values are encoded as video. The real list is
 // file_writer.VIDEO_EXTS, carried on the fps input spec in INPUT_TYPES, so
@@ -113,75 +140,51 @@ export function readToolStore(node, name, fallback) {
     return v;
 }
 
-// Write a JSON-able value into a hidden widget and re-sync the node's outputs.
+// Write a JSON-able value into a hidden widget.
 export function writeToolStore(node, name, value) {
     const w = getToolWidget(node, name);
     if (!w) return;
     w.value = typeof value === "string" ? value : JSON.stringify(value);
-    if (typeof node.bepicSyncToolOutputs === "function") node.bepicSyncToolOutputs();
     node.setDirtyCanvas?.(true, true);
 }
 
-// Does this node currently have roto / point data worth exposing an output for?
-function storeHasRoto(node) {
-    const raw = readToolStore(node, ROTO_WIDGET, "");
-    if (!raw) return false;
+// ── viewer tab keys ──────────────────────────────────────────────────────────
+
+/** The viewer tab a source node writes into: { key, label }, or null.
+ *
+ * One scheme for all three source types. An explicit tab_name groups every node
+ * sharing that name into one tab; an empty one gives the node a tab of its own,
+ * labelled after whatever feeds it. This is the single definition — the viewer's
+ * ingest, its stale-tab sweep and its tab tinting all read it from here, so a
+ * new source node type only has to be listed in SOURCE_NODES. */
+export function senderTabInfo(node) {
+    if (!isViewerSourceNode(node)) return null;
+
+    let explicit = "";
     try {
-        const obj = JSON.parse(raw);
-        return !!(obj && Array.isArray(obj.layers) && obj.layers.length > 0);
-    } catch (e) {
-        return false;
+        const w = (node.widgets || []).find((w) => w.name === "tab_name");
+        explicit = w ? (w.value || "") : "";
+    } catch (e) {}
+
+    if (explicit) {
+        const safe = explicit.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_\-]/g, "").trim();
+        return { key: `send_label_${safe || ("node_" + node.id)}`, label: explicit };
     }
+
+    let derived = "";
+    try {
+        const linked = (node.inputs || []).find((inp) => inp.link);
+        const link = linked ? app.graph.links[linked.link] : null;
+        if (link) {
+            const origin = app.graph.getNodeById(link.origin_id);
+            derived = origin ? (origin.title || origin.type || link.origin_id) : link.origin_id;
+        }
+    } catch (e) {}
+
+    return { key: `send_${node.id}`, label: derived || `Send ${node.id}` };
 }
 
-function storeHasPoints(node) {
-    for (const name of [SAM3_POS_WIDGET, SAM3_NEG_WIDGET]) {
-        const raw = readToolStore(node, name, "[]");
-        try {
-            const arr = JSON.parse(raw);
-            if (Array.isArray(arr) && arr.length > 0) return true;
-        } catch (e) {}
-    }
-    return false;
-}
-
-function storeHasBoxes(node) {
-    for (const name of [SAM3_BOX_POS_WIDGET, SAM3_BOX_NEG_WIDGET]) {
-        const raw = readToolStore(node, name, "[]");
-        try {
-            const arr = JSON.parse(raw);
-            if (Array.isArray(arr) && arr.length > 0) return true;
-        } catch (e) {}
-    }
-    return false;
-}
-
-// Build authoritative output specs from the node definition:
-//   { image: {name,type}, optional: [{name,type}, ...] }  (every slot past 0)
-function outputSpecsFromDef(nodeData) {
-    const types = (nodeData && nodeData.output) || [];
-    const names = (nodeData && nodeData.output_name) || [];
-    const spec = (i) => ({ name: names[i] || types[i] || `out${i}`, type: types[i] });
-    const optional = [];
-    for (let i = 1; i < types.length; i++) optional.push(spec(i));
-    return { image: spec(0), optional };
-}
-
-// Reveal at least `count` optional outputs (contiguous after the image slot).
-// Grows only — never removes a slot the user may have wired.
-function ensureOutputsAtLeast(node, count) {
-    const specs = node._bepicOutputSpecs;
-    if (!specs) return;
-    const target = Math.min(specs.optional.length + 1, 1 + Math.max(0, count));
-    // Guarantee the image slot at index 0 first.
-    if (node.outputs.length === 0) node.addOutput(specs.image.name, specs.image.type);
-    while (node.outputs.length < target) {
-        const spec = specs.optional[node.outputs.length - 1];
-        if (!spec) break;
-        node.addOutput(spec.name, spec.type);
-    }
-    node.setDirtyCanvas?.(true, true);
-}
+// ── node registration ────────────────────────────────────────────────────────
 
 // Re-run the widget-visibility sync after a widget's own callback. Wrapped once
 // per node — litegraph replaces the callback wholesale, so chaining to whatever
@@ -198,37 +201,21 @@ function resyncOnChange(node, widgetName) {
     };
 }
 
-// Register the node-side behaviour. Call from beforeRegisterNodeDef.
+/** Register bEpicSendToViewer. Call from beforeRegisterNodeDef. */
 export function registerSendNode(nodeType, nodeData) {
-    const specs = outputSpecsFromDef(nodeData);
     const videoFormats = videoFormatsFromDef(nodeData);
+    const outCount = ((nodeData && nodeData.output) || []).length;
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
         const r = onNodeCreated?.apply(this, arguments);
-
-        this._bepicOutputSpecs = specs;
         this._bepicVideoFormats = videoFormats;
-        // Collapse to just the image output; optional slots appear on demand.
-        if (Array.isArray(this.outputs)) {
-            for (let i = this.outputs.length - 1; i >= 1; i--) this.removeOutput(i);
-            if (this.outputs.length === 0) this.addOutput(specs.image.name, specs.image.type);
-        }
-
-        // Hide the tool storage widgets.
-        hideWidget(this, getToolWidget(this, ROTO_WIDGET));
-        hideWidget(this, getToolWidget(this, SAM3_POS_WIDGET));
-        hideWidget(this, getToolWidget(this, SAM3_NEG_WIDGET));
-        hideWidget(this, getToolWidget(this, SAM3_BOX_POS_WIDGET));
-        hideWidget(this, getToolWidget(this, SAM3_BOX_NEG_WIDGET));
-
         // Re-sync the save-to-output config widgets whenever the toggle flips —
         // and whenever the format changes, since that decides whether fps means
         // anything.
         resyncOnChange(this, OUTPUT_TOGGLE);
         resyncOnChange(this, FORMAT_WIDGET);
         this.bepicSyncOutputWidgets();
-
         return r;
     };
 
@@ -250,48 +237,175 @@ export function registerSendNode(nodeType, nodeData) {
         this.setDirtyCanvas?.(true, true);
     };
 
-    // Reveal outputs to match the current stores (grow-only).
-    nodeType.prototype.bepicSyncToolOutputs = function () {
-        let desired = 0;
-        if (storeHasRoto(this)) desired = Math.max(desired, 1);
-        if (storeHasPoints(this)) desired = Math.max(desired, 3);
-        if (storeHasBoxes(this)) desired = Math.max(desired, 5);
-        if (desired > 0) ensureOutputsAtLeast(this, desired);
-    };
-
-    // After a workflow load, re-hide widgets, guarantee the image output, and
-    // reconcile the optional outputs with the stored tool data.
     const onConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function (info) {
         const r = onConfigure?.apply(this, arguments);
-        this._bepicOutputSpecs = specs;
         this._bepicVideoFormats = videoFormats;
-        // Old workflows saved the node with no outputs — make sure `image` is
-        // present so the passthrough is always wirable.
-        if (!Array.isArray(this.outputs) || this.outputs.length === 0) {
-            this.addOutput(specs.image.name, specs.image.type);
+        // Workflows saved before the tools moved out carry roto_mask / SAM3
+        // slots this node no longer has. Litegraph restores whatever was
+        // serialized, so drop the extras rather than leave slots that can never
+        // be filled — their links are dead either way, and a stale slot would
+        // misalign the backend's output indices.
+        if (Array.isArray(this.outputs) && this.outputs.length > outCount) {
+            console.warn(
+                `[bEpicViewer] "${this.title || BEPIC_SEND_NODE}" was saved with ` +
+                `roto/SAM3 outputs; those moved to the Image Viewer Roto and ` +
+                `SAM3 Collector nodes, so they have been removed.`);
+            for (let i = this.outputs.length - 1; i >= outCount; i--) this.removeOutput(i);
         }
-        hideWidget(this, getToolWidget(this, ROTO_WIDGET));
-        hideWidget(this, getToolWidget(this, SAM3_POS_WIDGET));
-        hideWidget(this, getToolWidget(this, SAM3_NEG_WIDGET));
-        hideWidget(this, getToolWidget(this, SAM3_BOX_POS_WIDGET));
-        hideWidget(this, getToolWidget(this, SAM3_BOX_NEG_WIDGET));
+        if (!Array.isArray(this.outputs) || this.outputs.length === 0) {
+            const types = (nodeData && nodeData.output) || [];
+            const names = (nodeData && nodeData.output_name) || [];
+            if (types.length) this.addOutput(names[0] || types[0], types[0]);
+        }
         // Idempotent — a node restored from a workflow may or may not have gone
         // through onNodeCreated first, depending on the frontend version.
         resyncOnChange(this, OUTPUT_TOGGLE);
         resyncOnChange(this, FORMAT_WIDGET);
-        this.bepicSyncToolOutputs?.();
         this.bepicSyncOutputWidgets?.();
         return r;
     };
 }
 
-// Resolve the bEpicSendToViewer node that feeds a given viewer tab key.
-export function resolveSendNodeForTab(panel, tabKey) {
+/** Register a tool node (kind "roto" | "sam3"). Call from beforeRegisterNodeDef.
+ *
+ * All these need is their stores kept out of sight: the outputs come straight
+ * from the definition and never change. */
+export function registerToolNode(nodeType, nodeData, kind) {
+    const names = TOOL_WIDGETS[kind] || [];
+    const hideStores = function () {
+        for (const n of names) hideWidget(this, getToolWidget(this, n));
+        const sz = this.computeSize();
+        this.setSize([Math.max(this.size[0], sz[0]), sz[1]]);
+    };
+
+    const onNodeCreated = nodeType.prototype.onNodeCreated;
+    nodeType.prototype.onNodeCreated = function () {
+        const r = onNodeCreated?.apply(this, arguments);
+        hideStores.call(this);
+        return r;
+    };
+
+    const onConfigure = nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure = function (info) {
+        const r = onConfigure?.apply(this, arguments);
+        hideStores.call(this);
+        return r;
+    };
+}
+
+// ── resolving / creating the node behind a tab ───────────────────────────────
+
+/** The graph node backing a viewer tab, whatever its type (null if the tab is a
+ * folder / dropped-file tab, or its node is gone). */
+export function resolveTabNode(panel, tabKey) {
     if (!panel || !tabKey) return null;
     const id = panel.tabSourceNodeIds ? panel.tabSourceNodeIds[tabKey] : null;
     if (id == null) return null;
-    const node = app.graph.getNodeById(id);
-    if (node && node.type === BEPIC_SEND_NODE) return node;
+    return app.graph.getNodeById(id) || null;
+}
+
+// The output slot carrying a picture. bEpicSendToViewer's passthrough is typed
+// ANY, so name and wildcard both count before falling back to the first slot.
+function imageOutputSlot(node) {
+    const outs = (node && node.outputs) || [];
+    let i = outs.findIndex((o) => String(o.type).toUpperCase() === "IMAGE");
+    if (i < 0) i = outs.findIndex((o) => /^image$/i.test(o.name || ""));
+    if (i < 0) i = outs.findIndex((o) => o.type === "*");
+    if (i < 0 && outs.length) i = 0;
+    return i;
+}
+
+/** The { node, slot } a new tool node for this tab should be fed from.
+ *
+ * Normally that is whatever the tab's own node hands on. A tool node is the
+ * exception: it emits a matte or a prompt, never a picture, so adding a second
+ * tool to a Roto tab wires the new node to the same upstream image the Roto
+ * node is looking at rather than to the Roto node itself. */
+export function imageSourceForTab(panel, tabKey) {
+    const node = resolveTabNode(panel, tabKey);
+    if (!node) return null;
+
+    if (nodeToolKind(node)) {
+        try {
+            const linked = (node.inputs || []).find((inp) => inp.link != null);
+            const link = linked ? app.graph.links[linked.link] : null;
+            const origin = link ? app.graph.getNodeById(link.origin_id) : null;
+            if (origin) return { node: origin, slot: link.origin_slot };
+        } catch (e) {}
+        return null;
+    }
+
+    const slot = imageOutputSlot(node);
+    return slot < 0 ? null : { node, slot };
+}
+
+// An existing tool node of this kind already fed by `srcNodeId`, if any. Keeps
+// turning a tool on and off from reseeding the graph with duplicates.
+function findToolNodeFedBy(kind, srcNodeId) {
+    const type = TOOL_NODE_TYPES[kind];
+    const nodes = (app.graph && (app.graph._nodes || app.graph.nodes)) || [];
+    for (const n of nodes) {
+        if (!n || n.type !== type) continue;
+        const inp = (n.inputs || [])[0];
+        if (!inp || inp.link == null) continue;
+        const link = app.graph.links[inp.link];
+        if (link && String(link.origin_id) === String(srcNodeId)) return n;
+    }
     return null;
+}
+
+// Park the node to the right of its source, stepping down past anything already
+// sitting there so a Roto and a SAM3 node added from the same image don't land
+// on top of each other.
+function placeBeside(node, src) {
+    const [sx, sy] = src.pos || [0, 0];
+    const x = sx + (src.size?.[0] || 200) + 60;
+    let y = sy;
+    const nodes = (app.graph && (app.graph._nodes || app.graph.nodes)) || [];
+    for (let guard = 0; guard < 40; guard++) {
+        const clash = nodes.some((n) => n !== node && n.pos
+            && Math.abs(n.pos[0] - x) < 120 && Math.abs(n.pos[1] - y) < 90);
+        if (!clash) break;
+        y += (src.size?.[1] || 90) + 40;
+    }
+    node.pos = [x, y];
+}
+
+/** The tool node of `kind` that the given tab's drawing belongs to.
+ *
+ * Three outcomes, in order: the tab is already a tool tab of this kind; a tool
+ * node of this kind is already wired to the tab's image; or — only when
+ * `create` is set — a fresh one is added to the graph and connected.
+ *
+ * Creation is deliberately tied to the user pressing the tool button. Binding
+ * happens on every tab switch too, and a viewer that quietly grew a node each
+ * time you clicked through tabs would be a nasty surprise. */
+export function ensureToolNode(panel, tabKey, kind, { create = false } = {}) {
+    const type = TOOL_NODE_TYPES[kind];
+    if (!type) return null;
+
+    const tabNode = resolveTabNode(panel, tabKey);
+    if (tabNode && tabNode.type === type) return tabNode;
+
+    const src = imageSourceForTab(panel, tabKey);
+    if (!src) return null;
+
+    const existing = findToolNodeFedBy(kind, src.node.id);
+    if (existing || !create) return existing;
+
+    const LG = window.LiteGraph;
+    if (!LG || !LG.createNode) { console.warn("[bEpicViewer] LiteGraph unavailable"); return null; }
+    const node = LG.createNode(type);
+    if (!node) { console.warn("[bEpicViewer] could not create node", type); return null; }
+
+    app.graph.add(node);
+    placeBeside(node, src.node);
+    try {
+        src.node.connect(src.slot, node, 0);
+    } catch (e) {
+        console.warn("[bEpicViewer] could not connect the new tool node", e);
+    }
+    app.graph.setDirtyCanvas?.(true, true);
+    return node;
 }

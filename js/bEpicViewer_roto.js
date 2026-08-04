@@ -1,10 +1,10 @@
 // bEpicViewer_roto.js
 // RotoMixin — the in-viewer Roto tool (modelled on Nuke's Roto node).
 //
-// Data model (serialized to the send-node's roto_data widget, consumed by
-// roto_raster.py). All coordinates are normalized against the image, where
-// (0,0) is its top-left and (1,1) its bottom-right — but they are NOT clamped
-// to that range. A vertex, tangent or feather point may sit outside the frame;
+// Data model (serialized to the bEpicImageViewerRoto node's roto_data widget,
+// consumed by roto_raster.py). All coordinates are normalized against the
+// image, where (0,0) is its top-left and (1,1) its bottom-right — but they are
+// NOT clamped to that range. A vertex, tangent or feather point may sit outside;
 // the matte is simply cropped to the image resolution when it is rasterized
 // (PIL clips the scan-fill, and the preview is clipped to the same rect by
 // _rotoImageClipId). Clamping instead would drag an outside vertex onto the
@@ -176,7 +176,7 @@ export const RotoMixin = {
         p.appendChild(el("h4", "Roto"));
 
         if (!this._toolState.node) {
-            p.appendChild(el("div", "Active tab has no 'Send to bEpic Viewer' node, so roto can't be saved. Switch to a tab produced by that node.", "bepic-tool-hint"));
+            this._toolMissingNodeBody(p, "roto");
             return;
         }
 

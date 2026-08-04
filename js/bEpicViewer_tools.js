@@ -7,15 +7,22 @@
 //     screen-space <svg> for drawing handles) and a small toolbar/panel.
 //   * Map between normalized image coords ([0,1]) and screen coords using the
 //     reference svg's getScreenCTM(), so zoom/pan/fit are handled for free.
-//   * Bind the active viewer tab to its source bEpicSendToViewer node and
-//     load/save tool data through that node's hidden widgets.
+//   * Bind the active tool to the node that stores its work, and load/save
+//     through that node's hidden widgets.
 //   * Implement the SAM3 points tool end-to-end.
+//
+// Each tool writes into its own node type — Roto into bEpicImageViewerRoto,
+// both SAM3 tools into bEpicImageViewerSAM3Collector. Turning a tool on over a
+// tab that isn't one of those adds the node and wires it to the image the tab
+// is showing, so the toolbar works from any tab rather than only from tabs that
+// happen to come from the right kind of node.
 //
 // The Roto tool lives in bEpicViewer_roto.js and plugs into the hooks here
 // (_rotoActivate / _rotoDeactivate / _rotoRender / _rotoPointerDown / ...).
 
 import {
-    resolveSendNodeForTab,
+    ensureToolNode,
+    imageSourceForTab,
     readToolStore,
     writeToolStore,
     SAM3_POS_WIDGET,
@@ -23,6 +30,13 @@ import {
     SAM3_BOX_POS_WIDGET,
     SAM3_BOX_NEG_WIDGET,
 } from "./bEpicViewer_nodeTools.js";
+
+// Which node kind each toolbar tool stores into. Annotation is absent on
+// purpose: it is markup over whatever is on screen and needs no node at all.
+const TOOL_NODE_KIND = { roto: "roto", sam3: "sam3", sam3box: "sam3" };
+
+// How each tool names its node in the panel.
+const TOOL_NODE_LABEL = { roto: "Roto", sam3: "SAM3 Collector", sam3box: "SAM3 Collector" };
 
 const SVGNS = "http://www.w3.org/2000/svg";
 
@@ -288,7 +302,10 @@ export const ToolsMixin = {
         this._toolDraw.classList.toggle("active", tool !== "none");
         this._updateToolCursor();
 
-        this._bindToolsToActiveTab();
+        // Pressing a tool button is the one moment we may add a node to the
+        // graph: the user asked for this tool here, so give them somewhere to
+        // draw. Plain rebinds (tab switches) never create.
+        this._bindToolsToActiveTab({ create: tool !== "none" });
 
         // Panel content
         this._toolPanel.classList.toggle("show", tool !== "none");
@@ -313,25 +330,67 @@ export const ToolsMixin = {
         this._toolDraw.style.cursor = c;
     },
 
-    // Bind the current active tab to its send-node and load tool data.
-    _bindToolsToActiveTab() {
-        const node = resolveSendNodeForTab(this, this.activeTab);
+    // Point the active tool at the node that stores its work, and load what is
+    // already in there. Only the active tool is bound: the tools no longer share
+    // one node, so there is nothing to load for the others until they're picked
+    // — and picking one comes back through here.
+    _bindToolsToActiveTab(opts = {}) {
+        const kind = TOOL_NODE_KIND[this._toolState.active] || null;
+        const node = kind ? ensureToolNode(this, this.activeTab, kind, opts) : null;
         this._toolState.node = node;
-        if (node) {
+
+        this._sam3 = { pos: [], neg: [], drag: null, hover: null };
+        this._sam3box = { pos: [], neg: [], drag: null, hover: null };
+        if (kind === "sam3" && node) {
             this._sam3Load(node);
             this._sam3boxLoad(node);
-            this._rotoLoadFromNode?.(node);
-        } else {
-            this._sam3 = { pos: [], neg: [], drag: null, hover: null };
-            this._sam3box = { pos: [], neg: [], drag: null, hover: null };
-            this._rotoClearState?.();
         }
+        if (kind === "roto") {
+            if (node) this._rotoLoadFromNode?.(node);
+            else this._rotoClearState?.();
+        }
+
         // Reflect availability. Annotation needs no node, so its panel stays live
         // on every tab; refresh its per-tab annotation count on rebind.
         const disabled = !node && this._toolState.active !== "annotate";
         this._toolPanel.classList.toggle("bepic-tool-disabled", disabled);
         if (this._toolState.active === "annotate") this._annotUpdateInfo?.();
         this._toolRedraw();
+    },
+
+    // Rebuild whichever tool panel is showing (after a node appears, say).
+    _toolRefreshPanel() {
+        const t = this._toolState.active;
+        if (t === "sam3") this._sam3BuildPanel();
+        else if (t === "sam3box") this._sam3boxBuildPanel();
+        else if (t === "roto") this._rotoBuildPanel?.();
+    },
+
+    // Panel body for a tool with nowhere to store its work. Where the tab has an
+    // image source we can wire to, that is one button away; where it hasn't
+    // (a folder or dropped-file tab, which no node in the graph feeds) say so
+    // plainly instead of offering a button that would do nothing.
+    _toolMissingNodeBody(panel, tool) {
+        const label = TOOL_NODE_LABEL[tool] || "tool";
+        const src = imageSourceForTab(this, this.activeTab);
+        if (!src) {
+            panel.appendChild(elWith("div", {
+                className: "bepic-tool-hint",
+                textContent: `No node in the graph feeds this tab, so there is nothing to attach a ${label} node to. Switch to a tab a node produced.`,
+            }));
+            return;
+        }
+        const from = src.node.title || src.node.type || `node ${src.node.id}`;
+        const add = elWith("button", { className: "bepic-act", textContent: `Add ${label} node` });
+        add.onclick = () => {
+            this._bindToolsToActiveTab({ create: true });
+            this._toolRefreshPanel();
+        };
+        panel.appendChild(add);
+        panel.appendChild(elWith("div", {
+            className: "bepic-tool-hint",
+            textContent: `Adds a ${label} node fed from "${from}" and edits that. It gets its own tab the next time the workflow runs.`,
+        }));
     },
 
     _toolClearDraw() {
@@ -528,10 +587,7 @@ export const ToolsMixin = {
         p.appendChild(elWith("h4", { textContent: "SAM3 Points" }));
 
         if (!this._toolState.node) {
-            p.appendChild(elWith("div", {
-                className: "bepic-tool-hint",
-                textContent: "Active tab has no 'Send to bEpic Viewer' node, so points can't be saved. Switch to a tab produced by that node.",
-            }));
+            this._toolMissingNodeBody(p, "sam3");
             return;
         }
 
@@ -759,10 +815,7 @@ export const ToolsMixin = {
         p.appendChild(elWith("h4", { textContent: "SAM3 Boxes" }));
 
         if (!this._toolState.node) {
-            p.appendChild(elWith("div", {
-                className: "bepic-tool-hint",
-                textContent: "Active tab has no 'Send to bEpic Viewer' node, so boxes can't be saved. Switch to a tab produced by that node.",
-            }));
+            this._toolMissingNodeBody(p, "sam3box");
             return;
         }
 
