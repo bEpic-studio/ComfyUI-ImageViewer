@@ -284,22 +284,57 @@ export const PlaybackMixin = {
         return this.allTabs[this.compareTab] || null;
     },
 
+    // ── Path bar ─────────────────────────────────────────────────────────────
+
+    // What to name the file in the path bar.
+    //
+    // Media the viewer itself wrote, and anything loaded off disk, carries a real
+    // `path`. A workflow's own SaveImage/PreviewImage output has no path — only
+    // ComfyUI's type/subfolder/filename triple — but that triple IS the file's
+    // location under the ComfyUI root, so it is shown as one. A dropped OS file
+    // has neither (it lives on a blob: URL); its original name is all the browser
+    // will hand over, so that is what gets shown.
+    _framePathLabel(o) {
+        if (!o) return '';
+        if (o.path) return o.path;
+        if (o.filename) {
+            const parts = [];
+            if (o.type)      parts.push(o.type);
+            if (o.subfolder) parts.push(o.subfolder);
+            parts.push(o.dropped && o.name ? o.name : o.filename);
+            return parts.join('/');
+        }
+        return o.name || '';
+    },
+
+    // Point the path bar at a frame — every code path that changes what is on
+    // screen goes through here, so the bar can never be left naming the previous
+    // media. Passing null clears it (nothing is being viewed).
+    _updatePathBar(o) {
+        if (!this.pathBar) return;
+        const text = this._framePathLabel(o);
+        this.pathBar.textContent   = text;
+        this.pathBar.title         = text;
+        this.pathBar.style.display = text ? 'block' : 'none';
+    },
+
     setFrame(idx) {
         const imgs = this._baseFrames();
-        if (!imgs || imgs.length === 0) { this._exitVideoMode(); return; }
+        if (!imgs || imgs.length === 0) { this._exitVideoMode(); this._updatePathBar(null); return; }
 
         // Video tab: a single {kind:"video"} entry scrubbed through the <video>.
         // Still refresh the compare slot so a video base shows the second tab in
         // the wipe (the early return used to skip the compare update below).
         if (this._frameIsVideo(imgs[0])) {
             this._videoSeek(idx, imgs[0]);
+            this._updatePathBar(imgs[0]);
             this._updateCompareFrame(this.currentFrame);
             return;
         }
         this._exitVideoMode();
 
         const imgIdx = this.displayFrameToImageIndex(idx, imgs.length);
-        if (!imgs[imgIdx]) return;
+        if (!imgs[imgIdx]) { this._updatePathBar(null); return; }
         this.currentFrame = this.imageIndexToDisplayFrame(imgIdx, imgs.length);
 
         const i       = imgs[imgIdx];
@@ -316,16 +351,7 @@ export const PlaybackMixin = {
             this._syncCompareLayout();
         });
 
-        // Path bar
-        if (this.pathBar) {
-            if (i.external && i.path) {
-                this.pathBar.textContent = i.path;
-                this.pathBar.title       = i.path;
-                this.pathBar.style.display = 'block';
-            } else {
-                this.pathBar.style.display = 'none';
-            }
-        }
+        this._updatePathBar(i);
 
         this._updateCompareFrame(this.currentFrame);
 
@@ -539,11 +565,7 @@ export const PlaybackMixin = {
 
         this.updateTransform();
         if (this.setImageFilter) this.setImageFilter();
-        if (this.pathBar && imgObj.path) {
-            this.pathBar.textContent = imgObj.path;
-            this.pathBar.title       = imgObj.path;
-            this.pathBar.style.display = "block";
-        }
+        this._updatePathBar(imgObj);
         if (this._videoFrames > 0) this.applyTimelineBounds(this._videoFrames);
     },
 

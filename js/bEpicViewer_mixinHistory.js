@@ -712,7 +712,7 @@ export const HistoryMixin = {
             } else {
                 this.activeTab = null;
                 if (this.imgBase)  this.imgBase.src = '';
-                if (this.pathBar)  this.pathBar.style.display = 'none';
+                this._updatePathBar(null);
                 this.applyTimelineBounds(0);
             }
             this._historyPanelSig = null;

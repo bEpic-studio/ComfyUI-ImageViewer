@@ -14,7 +14,7 @@ You can load any folder of images from your computer into the viewer — no Comf
 
 ### Path Bar Overlay
 
-When viewing an externally loaded image, a **path bar** appears at the bottom of the viewport showing the file's path. Click it to expand and see the full path — useful when comparing many similarly-named files.
+A **path bar** at the bottom of the viewport names whatever is currently on screen, for every tab — images and videos alike. Files loaded off disk and anything the viewer wrote show their full path; a workflow's own output shows its location under the ComfyUI folder (`output/subfolder/name.png`); a file dropped in from the OS shows its name, which is all the browser reveals. Click the bar to expand it and read the whole path — useful when comparing many similarly-named files.
 
 ---
 

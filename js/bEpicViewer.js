@@ -804,7 +804,7 @@ class ViewerPanel extends HTMLElement {
         if (this.activeTab === nodeId) {
             const keys = Object.keys(this.allTabs);
             if (keys.length > 0) this.switchTab(keys[0]);
-            else { this.activeTab = null; this.imgBase.src = ""; }
+            else { this.activeTab = null; this.imgBase.src = ""; this._updatePathBar(null); }
         }
         this.refreshTabs();
         this.queuePersistViewerState();

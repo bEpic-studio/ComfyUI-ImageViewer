@@ -351,6 +351,7 @@ export const UIMixin = {
         } else {
             if (this._exitVideoMode) this._exitVideoMode();
             this.imgBase.src = "";
+            this._updatePathBar(null);
             this.applyTimelineBounds(0);
             this.timeline.value = 0;
             this.container.querySelector('#cur-f').innerText = 0;
@@ -480,6 +481,24 @@ export const UIMixin = {
         if (typeof this.queuePersistViewerState === 'function') this.queuePersistViewerState();
     },
 
+    // Did this event start inside `menu`?
+    //
+    // The dismiss listener sits on the document, and while docked the menu lives
+    // in the viewer's shadow root — so by the time the event reaches the document
+    // its `target` has been retargeted to the shadow HOST, and `menu.contains()`
+    // says no for a click on the menu's own swatch. The menu then closed on
+    // pointerdown, before the swatch's click could fire, and picking a color did
+    // nothing while docked (undocked, the popout has no shadow root, which is why
+    // it worked there). composedPath() keeps the real, pre-retargeting path.
+    _eventHitsMenu(ev, menu) {
+        if (!ev || !menu) return false;
+        if (typeof ev.composedPath === 'function') {
+            const path = ev.composedPath();
+            if (path && path.length) return path.indexOf(menu) !== -1;
+        }
+        return menu.contains(ev.target);
+    },
+
     _closeTabColorMenu() {
         if (this._tabColorMenuEl) { this._tabColorMenuEl.remove(); this._tabColorMenuEl = null; }
         if (this._tabColorMenuDismiss) {
@@ -582,7 +601,7 @@ export const UIMixin = {
         this._tabColorMenuEl = menu;
         this._tabColorMenuDoc = doc;
         this._tabColorMenuDismiss = (ev) => {
-            if (ev && ev.type === 'pointerdown' && menu.contains(ev.target)) return;
+            if (ev && ev.type === 'pointerdown' && this._eventHitsMenu(ev, menu)) return;
             this._closeTabColorMenu();
         };
         this._tabColorMenuKey = (ev) => { if (ev.key === 'Escape') this._closeTabColorMenu(); };
