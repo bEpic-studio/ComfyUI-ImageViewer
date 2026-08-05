@@ -428,7 +428,10 @@ export const PlaybackMixin = {
             try { v.pause(); } catch (e) {}
             let frame = Math.floor(displayFrame);
             if (this._compareVideoFrames > 0) frame = Math.max(0, Math.min(frame, this._compareVideoFrames - 1));
-            try { v.currentTime = frame / fps; } catch (e) {}
+            // Mid-window, for the same reason as _videoTimeForFrame — the compare
+            // layer held the identical duplicate frames the base layer did, which
+            // made a wipe between two copies of one clip drift by a frame.
+            try { v.currentTime = (frame + 0.5) / fps; } catch (e) {}
         }
     },
 
@@ -569,14 +572,39 @@ export const PlaybackMixin = {
         if (el) el.value = Number.isInteger(value) ? value : Math.round(value * 1000) / 1000;
     },
 
+    // Seek target for a frame index: the MIDDLE of the frame's window, not its
+    // leading edge.
+    //
+    // Frame f covers [f/fps, (f+1)/fps), so f/fps looks like the right target and
+    // in exact arithmetic it is — f/24 is bit-for-bit the frame's true timestamp,
+    // and JS maps it back perfectly. The loss happens inside the browser, which
+    // carries media time as whole microseconds: 1/24 s is 41666.666… µs, so the
+    // request truncates to a hair BELOW the frame's own timestamp and the seek
+    // resolves to f-1. It survives only when f/fps is a whole number of
+    // microseconds — at 24 fps, when 3 divides f.
+    //
+    // That predicts 16 of every 48 frames landing correctly, and a 48-frame clip
+    // with its index burned into each frame measured exactly that: 16/48 correct,
+    // 16 frames held, every correct one divisible by 3. Aiming at the middle
+    // leaves half a frame of slack for the rounding to eat and measured 48/48.
+    _videoTimeForFrame(frame) {
+        return (frame + 0.5) / (this._videoFps || 24);
+    },
+
+    // ...and the inverse. floor, not round: at time t the frame ON SCREEN is the
+    // one whose window contains t. Rounding would report f+1 for the mid-frame
+    // instants the seek above deliberately targets.
+    _videoFrameAtTime(t) {
+        return Math.max(0, Math.floor((t || 0) * (this._videoFps || 24)));
+    },
+
     _videoSeek(idx, imgObj) {
         this._enterVideoMode(imgObj);
-        const fps = this._videoFps || 24;
         let frame = Math.floor(idx);
         frame = this._videoFrames > 0 ? Math.max(0, Math.min(frame, this._videoFrames - 1))
                                       : Math.max(0, frame);
         this.currentFrame = frame;
-        try { this.videoBase.currentTime = frame / fps; } catch (e) {}
+        try { this.videoBase.currentTime = this._videoTimeForFrame(frame); } catch (e) {}
         if (this.timeline) this.timeline.value = frame;
         const curEl = this.container && this.container.querySelector("#cur-f");
         if (curEl) curEl.innerText = frame;
@@ -615,16 +643,18 @@ export const PlaybackMixin = {
             if (v.currentTime >= endT - 1e-3 || v.currentTime < startT - 1e-3) {
                 if (this.loopMode === "once") {
                     this.stop();
-                    try { v.currentTime = Math.max(startT, endT - 1 / fps); } catch (e) {}
+                    // Park ON the region's last frame, mid-window like every other
+                    // seek, rather than at the boundary it ends on.
+                    try { v.currentTime = this._videoTimeForFrame(this.playbackRange.end); } catch (e) {}
                 } else {
                     // loop + ping-pong both restart at the region start (a <video>
                     // can't scrub backwards smoothly, so ping-pong loops forward).
-                    try { v.currentTime = startT; } catch (e) {}
+                    try { v.currentTime = this._videoTimeForFrame(this.playbackRange.start); } catch (e) {}
                 }
             }
         }
 
-        const frame = Math.round((v.currentTime || 0) * fps);
+        const frame = this._videoFrameAtTime(v.currentTime);
         this.currentFrame = frame;
         if (this.timeline) this.timeline.value = frame;
         const curEl = this.container && this.container.querySelector("#cur-f");
@@ -641,9 +671,8 @@ export const PlaybackMixin = {
         const v = this.videoBase;
         if (!v) return;
         if (this._videoMode && this.isPlaying && this.playbackRange && this.loopMode !== "once") {
-            const fps = this._videoFps || 24;
             try {
-                v.currentTime = this.playbackRange.start / fps;
+                v.currentTime = this._videoTimeForFrame(this.playbackRange.start);
                 const p = v.play();
                 if (p && p.catch) p.catch(() => {});
             } catch (e) {}
@@ -687,7 +716,7 @@ export const PlaybackMixin = {
                 const startT = this.playbackRange.start / fps;
                 const endT   = (this.playbackRange.end + 1) / fps;
                 if (v.currentTime < startT - 1e-3 || v.currentTime >= endT - 1e-3) {
-                    try { v.currentTime = startT; } catch (e) {}
+                    try { v.currentTime = this._videoTimeForFrame(this.playbackRange.start); } catch (e) {}
                 }
             } else {
                 v.loop = (this.loopMode === 'loop' || this.loopMode === 'ping-pong');
