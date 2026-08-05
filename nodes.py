@@ -1,6 +1,6 @@
 import os
 import json
-import random
+import uuid
 from PIL import Image
 import numpy as np
 import torch
@@ -132,14 +132,122 @@ def _roto_mask(roto_data, N, H, W):
     return torch.from_numpy(np.ascontiguousarray(mask_np)).float()
 
 
+# How much preview data one node/tab may keep in the temp dir before its older
+# runs are deleted. Budgeting in megabytes rather than in frames tracks the
+# resource actually being consumed and scales itself with resolution: 4 GB is
+# roughly twenty 1080p stills or four 300-frame 1080p sequences, and a 4K
+# sequence is bounded by the same number without anyone re-tuning it.
+_TEMP_BUDGET_MB = max(1, int(os.environ.get("BEPIC_TEMP_BUDGET_MB", "4096")))
+
+# ...and never more runs than the viewer's history strip can show anyway
+# (HISTORY_LIMIT in bEpicViewer_mixinHistory.js). Without this a single-image
+# workflow would keep thousands of tiny runs to fill the byte budget when only
+# the newest 20 are reachable. Whichever limit binds first wins.
+_TEMP_MAX_RUNS = max(1, int(os.environ.get("BEPIC_TEMP_MAX_RUNS", "20")))
+
+# Hex characters in a run token. Fixed width so a token can be told apart from a
+# tab label that happens to end in "_r".
+_RUN_TAG_LEN = 8
+
+
+def _sanitize(value, fallback):
+    """Reduce a tab label / node id to characters that survive a filename and
+    can't be confused with the separators the run-token scheme relies on."""
+    out = "".join(c for c in str(value if value is not None else "")
+                  if c.isalnum() or c in "-_")
+    return out or fallback
+
+
+def _run_group_prefix(unique_id, label):
+    """Filename prefix shared by every frame this node has ever written for this
+    tab. Everything after it is `<token>_<index>`, which is what makes a single
+    execution identifiable — and therefore collectable — as a unit."""
+    return f"bEpic_S_{_sanitize(unique_id, 'anon')}_{_sanitize(label, 'send')}_r"
+
+
+def _run_tag_of(name, prefix):
+    """The run token in `name`, or None when it doesn't belong to this group."""
+    if not name.startswith(prefix):
+        return None
+    tag = name[len(prefix):len(prefix) + _RUN_TAG_LEN]
+    if len(tag) != _RUN_TAG_LEN or not all(c in "0123456789abcdef" for c in tag):
+        return None
+    # Guard against a longer token being truncated into a false match.
+    rest = name[len(prefix) + _RUN_TAG_LEN:]
+    return tag if rest.startswith("_") else None
+
+
+def _gc_temp_runs(out_dir, prefix, keep_tag, budget_mb=None, max_runs=None):
+    """Delete this group's oldest runs once the newer ones exceed the budget.
+
+    Runs are ordered newest-first by their most recent file. The run just written
+    is always kept, whatever the budget, so a sequence too large for the budget
+    still previews — it simply keeps no history behind it.
+
+    Limits are resolved per call rather than bound as defaults, so the module
+    attributes stay the single source of truth (and stay patchable in tests)."""
+    budget = (_TEMP_BUDGET_MB if budget_mb is None else budget_mb) * 1024 * 1024
+    run_cap = _TEMP_MAX_RUNS if max_runs is None else max_runs
+    try:
+        names = [n for n in os.listdir(out_dir) if n.startswith(prefix)]
+    except Exception:
+        return 0
+
+    runs = {}
+    for name in names:
+        tag = _run_tag_of(name, prefix)
+        if tag is None:
+            continue
+        try:
+            st = os.stat(os.path.join(out_dir, name))
+            mtime, size = st.st_mtime, st.st_size
+        except Exception:
+            mtime, size = 0.0, 0
+        runs.setdefault(tag, []).append((name, mtime, size))
+
+    if len(runs) <= 1:
+        return 0
+
+    newest_first = sorted(runs, key=lambda t: max(m for _, m, _s in runs[t]),
+                          reverse=True)
+    kept_bytes = 0
+    kept_runs = 0
+    removed = 0
+    for tag in newest_first:
+        files = runs[tag]
+        run_bytes = sum(s for _n, _m, s in files)
+        # Keep the current run unconditionally, and never collect everything —
+        # the newest run always survives even when it alone blows the budget.
+        within = kept_bytes + run_bytes <= budget and kept_runs < run_cap
+        if tag == keep_tag or kept_runs == 0 or within:
+            kept_bytes += run_bytes
+            kept_runs += 1
+            continue
+        for name, _m, _s in files:
+            try:
+                os.remove(os.path.join(out_dir, name))
+                removed += 1
+            except Exception:
+                continue
+    return removed
+
+
 def _temp_frames(inp, label, unique_id, out_dir, temp_type):
     """Write every frame of `inp` to a temp PNG and return viewer frame dicts.
 
     Colour images and single-channel masks are told apart by looking for an axis
-    of 3 or 4, so a MASK batch previews as greyscale instead of failing."""
+    of 3 or 4, so a MASK batch previews as greyscale instead of failing.
+
+    Every frame of one execution shares a run token. That is what stops a re-run
+    from colliding with the frames still referenced by history — the old scheme
+    drew a fresh `random.randint(1, 1000)` per frame, so at 300 frames and a full
+    history roughly 57 frames were silently overwritten by a later render — and
+    it is what lets `_gc_temp_runs` collect a whole execution at once."""
     if inp is None:
         return []
     batch_results = []
+    prefix = _run_group_prefix(unique_id, label)
+    run_tag = uuid.uuid4().hex[:_RUN_TAG_LEN]
 
     try:
         samples = inp
@@ -171,8 +279,7 @@ def _temp_frames(inp, label, unique_id, out_dir, temp_type):
                     # Convert RGBA → RGB so PNG saves in full colour
                     if img.mode == 'RGBA':
                         img = img.convert('RGB')
-                    safe_label = label if label else "send"
-                    filename = f"bEpic_S_{unique_id}_{safe_label}_{i:04d}_{random.randint(1,1000)}.png"
+                    filename = f"{prefix}{run_tag}_{i:04d}.png"
                     img.save(os.path.join(out_dir, filename), compress_level=4)
                     full = os.path.abspath(os.path.join(out_dir, filename))
                     batch_results.append({"filename": filename, "subfolder": "", "type": temp_type, "path": full})
@@ -187,8 +294,7 @@ def _temp_frames(inp, label, unique_id, out_dir, temp_type):
                         mask_arr = mask_arr[..., 0]
                     mask_arr = (255.0 * mask_arr).astype(np.uint8)
                     mask_img = Image.fromarray(np.clip(mask_arr, 0, 255).astype(np.uint8)).convert('L')
-                    safe_label = label if label else "send"
-                    mask_filename = f"bEpic_S_{unique_id}_{safe_label}_{i:04d}_{random.randint(1,1000)}_mask.png"
+                    mask_filename = f"{prefix}{run_tag}_{i:04d}_mask.png"
                     mask_img.save(os.path.join(out_dir, mask_filename), compress_level=4)
                     full = os.path.abspath(os.path.join(out_dir, mask_filename))
                     batch_results.append({"filename": mask_filename, "subfolder": "", "type": "mask", "path": full})
@@ -196,6 +302,10 @@ def _temp_frames(inp, label, unique_id, out_dir, temp_type):
                     continue
     except Exception:
         return []
+
+    # Collect older runs only after this one is safely on disk, so a failure
+    # above never costs the frames the viewer is currently showing.
+    _gc_temp_runs(out_dir, prefix, run_tag)
     return batch_results
 
 

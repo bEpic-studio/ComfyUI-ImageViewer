@@ -103,7 +103,20 @@ The **Manage Panel** dialog (from the Layouts menu) lets you:
 
 ## Cache Management
 
-Every image received by bEpicSendToViewer nodes is saved as a temporary PNG in ComfyUI's `temp/` directory, prefixed with `bEpic_`. These accumulate over long sessions.
+Every image received by bEpicSendToViewer nodes is saved as a temporary PNG in ComfyUI's `temp/` directory, prefixed with `bEpic_`.
+
+### Automatic collection
+
+All the frames written by one execution share a *run token*, which makes a whole render identifiable — and collectable — as a unit. After each execution the node deletes its own older runs once they exceed either limit below, so the temp directory settles at a bounded size instead of growing for as long as ComfyUI is up. Only frames written by that same node and tab are ever considered; another node's files are never touched, and the run just written is always kept even when it alone exceeds the budget.
+
+| Environment variable | Default | Meaning |
+| --- | --- | --- |
+| `BEPIC_TEMP_BUDGET_MB` | `4096` | Megabytes of preview frames kept per node/tab. Roughly four 300-frame 1080p renders. |
+| `BEPIC_TEMP_MAX_RUNS` | `20` | Renders kept per node/tab, matching the history strip's depth. Stops a single-image workflow keeping thousands of tiny runs. |
+
+Whichever limit binds first wins. History entries whose frames get collected disappear from the strip on their own — the prune pass confirms with the server before removing anything, so nothing vanishes on a guess.
+
+> Frames are named `bEpic_S_<node>_<tab>_r<token>_<index>.png`. Before this scheme each frame drew its own `random.randint(1, 1000)` suffix, so a re-run could silently overwrite a frame that history still pointed at — around 57 frames of a 300-frame sequence across a full 20-deep history.
 
 ### Clearing the Cache
 
@@ -111,6 +124,8 @@ Every image received by bEpicSendToViewer nodes is saved as a temporary PNG in C
 2. A confirmation dialog appears — this is irreversible.
 3. Confirm to delete all `bEpic_*` temp files and wipe all history thumbnails.
 4. The viewer resets to an empty state (all tabs closed, history cleared).
+
+This clears everything at once, across all nodes, rather than waiting for the automatic collection above. It frees disk; it cannot free memory the browser has already spent on frames it downloaded, which no page is able to evict.
 
 ---
 

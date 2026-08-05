@@ -131,11 +131,14 @@ def _to_frames(tensor):
     else:
         raise ValueError(f"unsupported tensor shape {tuple(t.shape)}")
 
-    arr = t.numpy()
-    c = arr.shape[-1]
-    if c == 1:
-        arr = np.repeat(arr, 3, axis=-1)
-    return np.ascontiguousarray(arr, dtype=np.float32)
+    # Densify first, expand second. np.repeat on a mask materialises three
+    # identical copies of every pixel — 1424 MB for a 60-frame 1080p matte, where
+    # broadcast_to costs nothing. Every consumer below builds its own uint8 frame
+    # anyway, so none of them needs the grey channels to be physically present.
+    arr = np.ascontiguousarray(t.numpy(), dtype=np.float32)
+    if arr.shape[-1] == 1:
+        arr = np.broadcast_to(arr, arr.shape[:-1] + (3,))
+    return arr
 
 
 # ── image writing (OpenImageIO, PIL fallback) ────────────────────────────────
@@ -153,6 +156,10 @@ def _oiio_type(oiio, ext):
 
 def _write_image_oiio(frame, path, ext):
     import OpenImageIO as oiio
+    # A mask arrives as a zero-stride broadcast view from _to_frames; OIIO reads
+    # the buffer directly, so it needs one that is really laid out in memory.
+    # Per frame this is a few tens of MB, not the whole batch.
+    frame = np.ascontiguousarray(frame, dtype=frame.dtype)
     h, w, nch = frame.shape
     spec = oiio.ImageSpec(w, h, nch, _oiio_type(oiio, ext))   # 4ch auto-names RGBA
     out = oiio.ImageOutput.create(path)
@@ -336,6 +343,66 @@ def _prepare_output(filename_prefix, w, h):
 
 # ── ComfyUI VIDEO objects ────────────────────────────────────────────────────
 
+def _pad_even_torch(images):
+    """Edge-replicate an IMAGE batch [B,H,W,C] up to even width/height.
+
+    Mirrors _pad_even, which does the same for the numpy frames the imageio
+    writer sees — the two encoders have the same constraint."""
+    if images.shape[2] % 2:
+        images = torch.cat([images, images[:, :, -1:, :]], dim=2)
+    if images.shape[1] % 2:
+        images = torch.cat([images, images[:, -1:, :, :]], dim=1)
+    return images
+
+
+def _save_video_even(video_obj, path):
+    """Write a VIDEO to `path`, working around encoders that reject odd frame sizes.
+
+    h264 with yuv420p needs an even width and height, and ComfyUI's
+    VideoFromComponents.save_to takes the stream size straight off the image
+    tensor without adjusting it — so a clip like 1593x1024 fails outright with
+    `avcodec_open2("libx264")` / "width not divisible by 2". A video carrying
+    audio hits this because that is what makes it a VIDEO object rather than a
+    plain IMAGE batch, which would never reach an encoder here at all.
+
+    The object's own writer is tried first: it is the only path that carries the
+    audio through untouched, and for a clip loaded from a file it can stream-copy
+    rather than re-encode. Only when that fails do we rebuild the clip around
+    padded frames — keeping audio and frame rate — so nothing is re-encoded that
+    did not have to be."""
+    try:
+        video_obj.save_to(path)
+        return
+    except Exception:
+        comps = None
+        try:
+            comps = video_obj.get_components()
+        except Exception:
+            comps = None
+        images = getattr(comps, "images", None) if comps is not None else None
+        if images is None:
+            raise
+        h, w = int(images.shape[1]), int(images.shape[2])
+        if h % 2 == 0 and w % 2 == 0:
+            raise      # even already — this failed for some other reason
+
+        from comfy_api.latest import InputImpl, Types
+        padded = _pad_even_torch(images)
+        kwargs = {}
+        try:
+            kwargs["bit_depth"] = video_obj.get_bit_depth()
+        except Exception:
+            pass
+        rebuilt = InputImpl.VideoFromComponents(
+            Types.VideoComponents(images=padded, audio=getattr(comps, "audio", None),
+                                  frame_rate=comps.frame_rate),
+            **kwargs)
+        rebuilt.save_to(path)
+        note = " (audio preserved)" if getattr(comps, "audio", None) is not None else ""
+        print(f"[bEpicSendToViewer] {w}x{h} is not encodable by h264; padded to "
+              f"{int(padded.shape[2])}x{int(padded.shape[1])}{note}")
+
+
 def is_video_input(obj):
     """True for a ComfyUI native VIDEO object (comfy_api VideoInput), duck-typed
     so it works across comfy_api versions without importing it."""
@@ -378,7 +445,7 @@ def write_video_input(video_obj, save_to_output, filename_prefix, file_format, f
             file = f"bEpic_vid_{random.randint(1, 1_000_000_000)}.mp4"
             path = os.path.join(tmp, file)
             subfolder = ""
-        video_obj.save_to(path)
+        _save_video_even(video_obj, path)
         try:
             frames = int(video_obj.get_frame_count())
         except Exception:
