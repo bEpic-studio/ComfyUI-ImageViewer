@@ -466,8 +466,11 @@ class bEpicImageViewerRoto:
 
     Shows its input in a viewer tab of its own, exactly as bEpicSendToViewer
     does, and hands back the matte the viewer's Roto tool drew over that tab.
-    There is no image output: the picture is already on screen, and a node that
-    only carries a matte is unambiguous about what it is for.
+    The input picture comes back out untouched alongside it, so the node can sit
+    inline in a chain instead of hanging off a branch.
+
+    `image` is second, behind `roto_mask`: slots are linked by index, so putting
+    it first would silently re-wire every workflow already using this node.
 
     `roto_data` is written by the viewer, not by hand — the JS keeps the widget
     hidden. It stays a widget so the shapes serialize into the workflow and
@@ -488,8 +491,8 @@ class bEpicImageViewerRoto:
             },
         }
 
-    RETURN_TYPES = ("MASK", )
-    RETURN_NAMES = ("roto_mask", )
+    RETURN_TYPES = ("MASK", _ANY)
+    RETURN_NAMES = ("roto_mask", "image")
     FUNCTION = "run"
     OUTPUT_NODE = True
     CATEGORY = "image/bEpic"
@@ -497,7 +500,7 @@ class bEpicImageViewerRoto:
     def run(self, image, tab_name="", roto_data="", unique_id=None):
         _push_tab(image, tab_name, unique_id, "bEpicImageViewerRoto")
         N, H, W = _dims_from_input(image)
-        return (_roto_mask(roto_data, N, H, W), )
+        return (_roto_mask(roto_data, N, H, W), image)
 
 
 class bEpicImageViewerSAM3Collector:

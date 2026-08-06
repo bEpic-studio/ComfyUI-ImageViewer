@@ -3,7 +3,7 @@
 // that also carry an in-viewer tool.
 //
 //     bEpicSendToViewer              – plain passthrough preview
-//     bEpicImageViewerRoto           – + roto_mask
+//     bEpicImageViewerRoto           – + roto_mask, then the input passed through
 //     bEpicImageViewerSAM3Collector  – + SAM3 point / box prompts
 //
 // The two tool nodes carry hidden STRING widgets that the viewer's tools write:
