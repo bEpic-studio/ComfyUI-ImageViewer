@@ -48,6 +48,29 @@ With the viewer hovered, press <kbd>↑</kbd> and <kbd>↓</kbd> to move through
 
 Each tab stores up to **20 snapshots**. Once the limit is reached, the oldest snapshot is removed when a new one arrives. The history is persisted to `localStorage`, so it survives page reloads.
 
+### Selecting Several Snapshots
+
+| Action | How |
+|---|---|
+| Add a snapshot to the selection | <kbd>Ctrl</kbd>+click (<kbd>Cmd</kbd> on Mac) |
+| Select a range | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+click |
+| Clear the selection | Click any thumbnail normally |
+
+Selected thumbnails carry a blue ring and a dot in the corner. The selection belongs to one tab and is not persisted — it is dropped whenever the strip shifts underneath it, such as when a new snapshot arrives from a prune.
+
+<kbd>Ctrl</kbd> rather than plain <kbd>Shift</kbd>, because <kbd>Shift</kbd>+click is [snapshot comparison](comparison.md) and that is the more valuable gesture. A snapshot can be in the selection *and* pinned for comparison at the same time.
+
+Once several are selected:
+
+- **Drag any one of them** onto the node graph and the whole selection is dropped, one loader node per snapshot, cascaded so none lands hidden behind another. Dragging a thumbnail that is *not* in the selection drags just that one and leaves the selection alone.
+- **Press <kbd>Delete</kbd>** (with the viewer hovered) or use the context menu to remove them all in one go.
+
+### Deleting Snapshots
+
+With the viewer hovered and the history strip open, <kbd>Delete</kbd> removes the selected snapshots — or, when nothing is selected, the snapshot currently open in the viewer. Nothing on disk is touched. When there is nothing to delete the key is left alone, so it still reaches ComfyUI's own delete-selected-nodes behind the panel.
+
+<kbd>Delete</kbd> is one of ComfyUI's own keys, so it ships without a registered binding and works only while the viewer is hovered. Assign your own combo in **Settings → Keybinding** (*bEpic Viewer: Delete Selected History Snapshots*) if you want it to work with the cursor elsewhere.
+
 ### History Context Menu
 
 Right-click any thumbnail to open the context menu:
@@ -56,6 +79,7 @@ Right-click any thumbnail to open the context menu:
 |---|---|
 | Copy Image Path | Copies the absolute file path of that snapshot to the clipboard |
 | Remove from History | Deletes that snapshot from the strip (does not delete the file on disk) |
+| Remove *n* from History | Shown instead when you right-click inside a selection — removes all of them |
 
 Thumbnails in the strip load lazily, so only the ones scrolled into view hold a decoded image.
 

@@ -84,6 +84,15 @@ const ACTION_DEFS = [
     { key: "HistoryNext",  label: "Next History Snapshot",     combo: { key: "ArrowDown" },
       enabled: _historyOpen, run: (p) => { if (typeof p.navigateHistory === "function") p.navigateHistory(1); } },
 
+    // Delete is one of ComfyUI's own, so no default binding is registered for it
+    // (see viewerKeybindings) — but the viewer still answers it while hovered,
+    // which is the only place it could mean "these snapshots" anyway. `enabled`
+    // is what keeps it from swallowing the key when there is nothing to delete,
+    // leaving it to ComfyUI's delete-selected-nodes behind the panel.
+    { key: "HistoryDelete", label: "Delete Selected History Snapshots", combo: { key: "Delete" },
+      enabled: (p) => _historyOpen(p) && typeof p.hasDeletableHistory === "function" && p.hasDeletableHistory(),
+      run: (p) => p.deleteSelectedHistory() },
+
     { key: "FitView",      label: "Fit Image To Viewport",   combo: { key: "f" },
       run: (p) => p.fitView() },
     { key: "CycleCompare", label: "Cycle Compare Mode",      combo: { key: "c" },

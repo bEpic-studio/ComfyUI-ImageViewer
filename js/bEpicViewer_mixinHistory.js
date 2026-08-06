@@ -1,5 +1,13 @@
 // bEpicViewer_mixinHistory.js
 // History panel: thumbnails, snapshots, folder loading, tab management.
+//
+// Three things a thumbnail click can mean, kept apart by modifier:
+//   plain        — open that snapshot in the viewport (again to go back)
+//   Shift        — pin it against the open one as a two-snapshot compare
+//   Ctrl / Cmd   — add it to the multi-selection (+Shift for a range), which
+//                  Delete and the drag-to-graph handler then act on
+// Shift keeps compare because that is the older and more valuable gesture; the
+// selection is the one that had to find another modifier.
 import { api } from "../../scripts/api.js";
 
 // Snapshots kept per tab. With clip caching on, this is also how many videos can
@@ -201,6 +209,9 @@ export const HistoryMixin = {
             }
         }
         if (removed > 0) {
+            // Pruning happens behind the user's back, so a selection that
+            // survived it would point at whatever slid into those slots.
+            this.clearHistorySelection();
             this._historyPanelSig = null;
             this.renderHistoryPanel();
         }
@@ -255,6 +266,87 @@ export const HistoryMixin = {
         this.queuePersistViewerState();
     },
 
+    // ── Multi-selection ──────────────────────────────────────────────────────
+    //
+    // Ctrl/Cmd-click builds it, Ctrl+Shift-click extends it as a range. Plain
+    // Shift-click is deliberately left alone: that is the two-snapshot compare
+    // pin, and it is the more valuable gesture of the two.
+    //
+    // It lives per tab -- the strip only ever shows one tab's stack, and a
+    // selection spanning tabs could not be shown, dragged or deleted as a unit.
+    // Transient by design: not persisted, and dropped whenever the stack it
+    // indexes into shifts underneath it.
+
+    _historySel() {
+        if (!this._historySelSet) this._historySelSet = new Set();
+        return this._historySelSet;
+    },
+
+    isHistoryItemSelected(key, idx) {
+        return this._historySelKey === key && this._historySel().has(idx);
+    },
+
+    /** The selected indices for a tab, ascending. Empty when it isn't the one. */
+    historySelectionIndices(key = this.activeTab) {
+        if (this._historySelKey !== key) return [];
+        const stack = this.history[key] || [];
+        return [...this._historySel()].filter((i) => i >= 0 && i < stack.length).sort((a, b) => a - b);
+    },
+
+    /** `[{ imgObj, snapshot }]` for the selection, in strip order. */
+    selectedHistorySnapshots(key = this.activeTab) {
+        const stack = this.history[key] || [];
+        return this.historySelectionIndices(key)
+            .map((i) => ({ imgObj: stack[i] && stack[i][0], snapshot: stack[i] }))
+            .filter((entry) => entry.imgObj);
+    },
+
+    clearHistorySelection() {
+        if (!this._historySelKey && this._historySel().size === 0) return;
+        this._historySelKey = null;
+        this._historySelAnchor = null;
+        this._historySel().clear();
+        this._paintHistorySelection();
+    },
+
+    toggleHistorySelection(key, idx) {
+        if (this._historySelKey !== key) {
+            this._historySelKey = key;
+            this._historySel().clear();
+        }
+        const set = this._historySel();
+        if (set.has(idx)) set.delete(idx);
+        else set.add(idx);
+        this._historySelAnchor = set.has(idx) ? idx : null;
+        this._paintHistorySelection();
+    },
+
+    extendHistorySelection(key, idx) {
+        if (this._historySelKey !== key || this._historySelAnchor == null) {
+            this.toggleHistorySelection(key, idx);
+            return;
+        }
+        const set = this._historySel();
+        const [lo, hi] = this._historySelAnchor < idx
+            ? [this._historySelAnchor, idx]
+            : [idx, this._historySelAnchor];
+        for (let i = lo; i <= hi; i++) set.add(i);
+        this._paintHistorySelection();
+    },
+
+    // Toggling classes rather than re-rendering: a rebuild drops and re-decodes
+    // every thumbnail, which is far too much for a click that changed nothing
+    // but which items are highlighted. renderHistoryPanel applies the same
+    // classes from state, so a rebuild for other reasons keeps them.
+    _paintHistorySelection() {
+        if (!this.historyStrip) return;
+        const selected = new Set(this.historySelectionIndices(this.activeTab));
+        for (const thumb of this.historyStrip.children) {
+            const idx = Number(thumb.dataset ? thumb.dataset.idx : NaN);
+            if (Number.isInteger(idx)) thumb.classList.toggle('multi', selected.has(idx));
+        }
+    },
+
     isHistorySelectionPinned(key) {
         if (this.historyCompare && this.historyCompare.key === key) return true;
         if (this.isViewingHistory && this.currentHistoryKey === key) return true;
@@ -267,6 +359,14 @@ export const HistoryMixin = {
 
         if (this.currentHistoryKey === key && Number.isInteger(this.currentHistoryIndex)) {
             this.currentHistoryIndex = Math.min(this.currentHistoryIndex + 1, Math.max(0, stack.length - 1));
+        }
+
+        // Everything already in the strip moved down one; the selection has to
+        // move with it or it would silently come to mean other snapshots.
+        if (this._historySelKey === key) {
+            const shifted = new Set([...this._historySel()].map((i) => i + 1));
+            this._historySelSet = shifted;
+            if (Number.isInteger(this._historySelAnchor)) this._historySelAnchor += 1;
         }
 
         if (this.historyCompare && this.historyCompare.key === key) {
@@ -370,11 +470,17 @@ export const HistoryMixin = {
                 try { imgEl.src = this.thumbUrl(imgObj); } catch (e) { /* ignore */ }
             }
             thumb.appendChild(imgEl);
-            thumb.title = `History ${idx + 1}`;
+            thumb.dataset.idx = String(idx);
+            thumb.title = `History ${idx + 1}\n` +
+                          `Ctrl+click to add to the selection, Ctrl+Shift+click for a range\n` +
+                          `Shift+click to compare against the open snapshot`;
             // Drag source: drop onto the ComfyUI graph to make a loader node. The
             // whole snapshot is passed so multi-image sequences map to a sequence
-            // loader (see _makeHistoryThumbDraggable / _sequenceDirForSnapshot).
-            if (imgObj && this._makeHistoryThumbDraggable) this._makeHistoryThumbDraggable(thumb, imgObj, snapshot);
+            // loader (see _makeHistoryThumbDraggable / _sequenceDirForSnapshot);
+            // key and index let a drag pick up the whole selection at once.
+            if (imgObj && this._makeHistoryThumbDraggable) {
+                this._makeHistoryThumbDraggable(thumb, imgObj, snapshot, key, idx);
+            }
 
             const isSelected = (this.currentHistoryKey === key && this.currentHistoryIndex === idx);
             if (isSelected) {
@@ -387,6 +493,8 @@ export const HistoryMixin = {
                 if (idx === this.historyCompare.otherIdx) thumb.classList.add('compare');
             }
 
+            if (this.isHistoryItemSelected(key, idx)) thumb.classList.add('multi');
+
             // Don't preventDefault here — that would block the native drag start
             // used to drop thumbnails onto the graph. stopPropagation still keeps
             // the mousedown from reaching any parent panel handler.
@@ -394,6 +502,17 @@ export const HistoryMixin = {
             thumb.oncontextmenu = (ev) => { ev.preventDefault(); ev.stopPropagation(); this.showThumbContextMenu(ev, imgObj, key, idx); };
             thumb.onclick = (ev) => {
                 ev.stopPropagation();
+
+                // Ctrl/Cmd owns multi-selection so that plain Shift stays with
+                // compare. Neither changes what the viewport is showing.
+                if (ev.ctrlKey || ev.metaKey) {
+                    if (ev.shiftKey) this.extendHistorySelection(key, idx);
+                    else             this.toggleHistorySelection(key, idx);
+                    return;
+                }
+
+                // Any other click is about the view, so the selection goes.
+                this.clearHistorySelection();
 
                 if (ev.shiftKey && this.isViewingHistory && this.currentHistoryKey === key) {
                     if (!this.historyCompare) {
@@ -525,13 +644,20 @@ export const HistoryMixin = {
         };
         menu.appendChild(item);
 
+        // Right-clicking inside a selection acts on all of it; right-clicking
+        // outside one acts on the item under the cursor, as it always did.
+        const batch = this.isHistoryItemSelected(key, idx)
+            ? this.historySelectionIndices(key) : [];
         const removeItem = doc.createElement('div');
         removeItem.className = 'thumb-ctx-item';
-        removeItem.textContent = '🗑 Remove from history';
+        removeItem.textContent = batch.length > 1
+            ? `🗑 Remove ${batch.length} from history`
+            : '🗑 Remove from history';
         removeItem.onclick = (e) => {
             e.stopPropagation();
             menu.remove();
-            this.removeHistoryItem(key, idx);
+            if (batch.length > 1) this.removeHistoryItems(key, batch);
+            else this.removeHistoryItem(key, idx);
         };
         menu.appendChild(removeItem);
 
@@ -542,6 +668,45 @@ export const HistoryMixin = {
 
         const dismiss = () => { menu.remove(); this.container.removeEventListener('click', dismiss, true); };
         setTimeout(() => this.container.addEventListener('click', dismiss, true), 0);
+    },
+
+    /** Remove several snapshots of one tab in a single go. */
+    removeHistoryItems(key, indices) {
+        // Back to front: removeHistoryItem re-indexes everything after the one it
+        // drops, so the lower indices are only correct while they are still ahead.
+        const ordered = [...new Set(indices)].filter(Number.isInteger).sort((a, b) => b - a);
+        if (ordered.length === 0) return;
+        for (const index of ordered) this.removeHistoryItem(key, index);
+        // Whatever survived has shifted; the old indices no longer mean anything.
+        this.clearHistorySelection();
+    },
+
+    /**
+     * What the Delete hotkey removes: the multi-selection when there is one,
+     * otherwise the snapshot currently open in the viewer. Does nothing when
+     * neither applies, so the key falls through to whatever else wants it.
+     */
+    deleteSelectedHistory() {
+        const key = this.activeTab;
+        const selected = this.historySelectionIndices(key);
+        if (selected.length > 0) {
+            this.removeHistoryItems(key, selected);
+            return true;
+        }
+        if (this.isViewingHistory && this.currentHistoryKey === key &&
+            Number.isInteger(this.currentHistoryIndex)) {
+            this.removeHistoryItem(key, this.currentHistoryIndex);
+            return true;
+        }
+        return false;
+    },
+
+    /** True when Delete has something to act on -- see deleteSelectedHistory. */
+    hasDeletableHistory() {
+        const key = this.activeTab;
+        if (this.historySelectionIndices(key).length > 0) return true;
+        return !!(this.isViewingHistory && this.currentHistoryKey === key &&
+                  Number.isInteger(this.currentHistoryIndex));
     },
 
     removeHistoryItem(key, index) {

@@ -14,7 +14,7 @@ import { ToolsMixin }    from "./bEpicViewer_tools.js";
 import { RotoMixin }     from "./bEpicViewer_roto.js";
 import { AnnotateMixin } from "./bEpicViewer_annotate.js";
 import { DnDMixin }      from "./bEpicViewer_mixinDnD.js";
-import { SendFromNodeMixin, registerSendToViewerMenu } from "./bEpicViewer_sendFromNode.js";
+import { SendFromNodeMixin, registerSendToViewerMenu, sendSelectionToViewer } from "./bEpicViewer_sendFromNode.js";
 import {
     registerSendNode, registerToolNode, senderTabInfo, isViewerSourceNode,
     BEPIC_SEND_NODE, BEPIC_ROTO_NODE, BEPIC_SAM3_NODE,
@@ -591,6 +591,7 @@ class ViewerPanel extends HTMLElement {
                 this.previewBackup       = null;
                 this.isViewingHistory    = false;
                 this._historyPanelSig    = null;
+                this.clearHistorySelection?.();
                 if (this.historyStrip)   this.historyStrip.innerHTML = '';
                 // Keep the history panel open after clearing — just refresh its (now empty) strip.
                 if (this.renderHistoryPanel) this.renderHistoryPanel();
@@ -1125,6 +1126,17 @@ app.registerExtension({
                 _toggleViewerPanelFromUi();
             },
         },
+        // The right-click "Send to Image Viewer" entry, reachable from the
+        // keyboard. No default combo — it is listed in Settings → Keybinding for
+        // the user to assign, since every unmodified key is already spoken for.
+        {
+            id:    "bEpic.sendSelectionToViewer",
+            label: "bEpic Viewer: Send Selected Node To Image Viewer (runs the branch when needed)",
+            function: () => sendSelectionToViewer({
+                getPanel:  () => globalViewerPanel,
+                showPanel: () => _setViewerPanelToggle(true, { syncDisplay: true }),
+            }),
+        },
         // One command per viewer hotkey, which is what puts them in
         // Settings → Keybinding for rebinding. They act on the visible panel, so
         // a combo assigned there also works with the cursor off the viewer.
@@ -1132,7 +1144,8 @@ app.registerExtension({
     ],
     keybindings: viewerKeybindings(),
     menuCommands: [
-        { path: ["Extensions", "bEpic"], commands: ["bEpic.toggleViewer"] },
+        { path: ["Extensions", "bEpic"],
+          commands: ["bEpic.toggleViewer", "bEpic.sendSelectionToViewer"] },
     ],
     actionBarButtons: [
         {

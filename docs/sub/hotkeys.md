@@ -27,8 +27,13 @@ Every key on this page can be changed — see [Changing the Hotkeys](#changing-t
 |---|---|
 | <kbd>↑</kbd> | Go to previous history snapshot (newer) |
 | <kbd>↓</kbd> | Go to next history snapshot (older) |
+| <kbd>Delete</kbd> | Remove the selected snapshots, or the one currently open |
 | <kbd>Shift</kbd>+click thumbnail | Select two history items for side-by-side comparison |
-| Right-click thumbnail | Context menu — Copy Path / Remove snapshot |
+| <kbd>Ctrl</kbd>+click thumbnail | Add / remove a snapshot from the selection |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+click thumbnail | Select a range of snapshots |
+| Right-click thumbnail | Context menu — Copy Path / Remove snapshot(s) |
+
+See [Selecting Several Snapshots](tabs-history.md#selecting-several-snapshots) for what a selection can then do. <kbd>Delete</kbd> is one of ComfyUI's own keys, so it ships unregistered and works only while the viewer is hovered.
 
 ## Tabs
 

@@ -16,11 +16,19 @@
 //      Dropping ONTO an existing loader node (VHS or native Load Image/Video)
 //      replaces that node's media in place instead of adding a new node — the
 //      node's wiring and position are kept, only the referenced file changes.
+//      Dragging a thumbnail that is part of a history multi-selection carries the
+//      whole selection, one loader per snapshot, cascaded from the drop point. A
+//      batch never replaces a node in place: a loader holds one file, so there is
+//      nothing to say which of them should win.
 import { api } from "../../scripts/api.js";
 import { app } from "../../scripts/app.js";
 
 const _IMG_RE = /\.(png|jpe?g|webp|gif|bmp|avif|tiff?|svg|ico)$/i;
 const _VID_RE = /\.(mp4|m4v|mov|webm|mkv|ogv|avi)$/i;
+
+// How far each node of a multi-item drop is stepped from the last, so a
+// batch lands as a readable cascade instead of one unreachable pile.
+const DROP_CASCADE = 28;
 
 export const DnDMixin = {
 
@@ -179,33 +187,48 @@ export const DnDMixin = {
     // Make a history-strip thumbnail a drag source for the node graph. `snapshot`
     // is the full frame array behind the thumbnail — a length>1 image snapshot is
     // an image sequence and maps to a directory-based sequence loader.
-    _makeHistoryThumbDraggable(thumb, imgObj, snapshot) {
+    _makeHistoryThumbDraggable(thumb, imgObj, snapshot, key, idx) {
         if (!thumb || !imgObj) return;
         thumb.draggable = true;
         const img = thumb.querySelector("img");
         if (img) img.draggable = false;   // let the container own the drag, not the <img>
         thumb.addEventListener("dragstart", (e) => {
-            const seq = this._sequenceDirForSnapshot(snapshot, imgObj);
-            const payload = {
-                path:      imgObj.path || null,
-                url:       imgObj.url || null,
-                filename:  imgObj.filename || imgObj.name || null,
-                subfolder: imgObj.subfolder || "",
-                type:      imgObj.type || null,
-                external:  !!imgObj.external,
-                dropped:   !!imgObj.dropped,
-                kind:      imgObj.kind || (this._frameIsVideo(imgObj) ? "video" : "image"),
-                thumb:     imgObj.thumb || null,
-                isSequence: !!(seq && seq.dir),
-                seqDir:     seq ? seq.dir : null,
-                seqCount:   seq ? seq.count : 0,
-            };
+            // Dragging a thumb that is part of a multi-selection takes the whole
+            // selection in one go; dragging any other thumb takes just that one
+            // and leaves the selection where it was.
+            const picked = this.isHistoryItemSelected?.(key, idx)
+                ? this.selectedHistorySnapshots(key)
+                : [{ imgObj, snapshot }];
+            const items = picked
+                .map((p) => this._historyDragItem(p.imgObj, p.snapshot))
+                .filter(Boolean);
+            if (items.length === 0) return;
             try {
-                e.dataTransfer.setData("application/x-bepic-history", JSON.stringify(payload));
+                e.dataTransfer.setData("application/x-bepic-history", JSON.stringify({ items }));
                 e.dataTransfer.effectAllowed = "copy";
                 if (img && e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(img, 20, 20);
             } catch (_) {}
         });
+    },
+
+    /** One history frame, flattened into what the graph-drop side needs. */
+    _historyDragItem(imgObj, snapshot) {
+        if (!imgObj) return null;
+        const seq = this._sequenceDirForSnapshot(snapshot, imgObj);
+        return {
+            path:      imgObj.path || null,
+            url:       imgObj.url || null,
+            filename:  imgObj.filename || imgObj.name || null,
+            subfolder: imgObj.subfolder || "",
+            type:      imgObj.type || null,
+            external:  !!imgObj.external,
+            dropped:   !!imgObj.dropped,
+            kind:      imgObj.kind || (this._frameIsVideo(imgObj) ? "video" : "image"),
+            thumb:     imgObj.thumb || null,
+            isSequence: !!(seq && seq.dir),
+            seqDir:     seq ? seq.dir : null,
+            seqCount:   seq ? seq.count : 0,
+        };
     },
 
     // A history snapshot with >1 image frame is an image sequence. If every frame
@@ -258,7 +281,11 @@ export const DnDMixin = {
                 e.preventDefault(); e.stopPropagation();
                 let payload = null;
                 try { payload = JSON.parse(e.dataTransfer.getData("application/x-bepic-history")); } catch (_) {}
-                if (payload) this._dropHistoryOntoGraph(payload, e);
+                if (!payload) return;
+                // {items:[…]} is what a drag sends; a bare item is tolerated so a
+                // drag that began before a reload cannot land as nothing.
+                this._dropHistoryOntoGraph(
+                    Array.isArray(payload.items) ? payload.items : [payload], e);
             });
             return true;
         };
@@ -288,53 +315,82 @@ export const DnDMixin = {
         return String(p || "").replace(/\\/g, "/").split("/").pop() || "image.png";
     },
 
-    async _dropHistoryOntoGraph(payload, e) {
+    async _dropHistoryOntoGraph(items, e) {
+        const list = (Array.isArray(items) ? items : [items]).filter(Boolean);
+        if (list.length === 0) return;
         try {
-            const isVideo = payload.kind === "video";
-
             // Dropped onto an existing loader node whose widget matches the dragged
             // media type → swap that node's file in place (keeps its wiring/position)
             // rather than spawning a new node. Falls through to node-creation when
             // the drop misses, hits an unrelated node, or the media types differ.
-            const target = this._nodeUnderEvent(e);
-            if (target) {
-                const widget = this._loaderWidgetFor(target, isVideo ? "video" : "image", payload);
-                if (widget && await this._replaceLoaderMedia(target, widget, payload, isVideo)) return;
-            }
-
-            // Image sequence → a directory-based loader that reads the whole
-            // sequence. VHS "Load Images (Path)" takes an arbitrary directory.
-            if (payload.isSequence && payload.seqDir) {
-                if (this._nodeTypeAvailable("VHS_LoadImagesPath")) {
-                    this._createPathLoaderNode("VHS_LoadImagesPath", "directory", payload.seqDir, e);
-                    return;
+            // Only for a single item: a node has one file, so a batch has nothing
+            // to say about which of them should replace it.
+            if (list.length === 1) {
+                const payload = list[0];
+                const target = this._nodeUnderEvent(e);
+                if (target) {
+                    const isVideo = payload.kind === "video";
+                    const widget = this._loaderWidgetFor(target, isVideo ? "video" : "image", payload);
+                    if (widget && await this._replaceLoaderMedia(target, widget, payload, isVideo)) return;
                 }
-                // ComfyUI core has no arbitrary-path folder loader (the native
-                // LoadImageDataSetFromFolder only accepts input-dir subfolders),
-                // so without VHS fall through to a single-image loader below.
             }
 
-            const absPath = this._absPathForPayload(payload);
-
-            // Preferred path: a VHS "(Path)" loader that references the ORIGINAL
-            // file on disk — no upload, no duplicate copy in /input.
-            if (absPath) {
-                const type   = isVideo ? "VHS_LoadVideoPath" : "VHS_LoadImagePath";
-                const widget = isVideo ? "video" : "image";
-                if (this._nodeTypeAvailable(type)) {
-                    this._createPathLoaderNode(type, widget, absPath, e);
-                    return;
-                }
-                // VHS not installed → fall through to the native upload loader.
+            // Cascade, so a batch does not land as one pile with only the last
+            // node reachable.
+            let offset = [0, 0];
+            for (const payload of list) {
+                await this._createLoaderForPayload(payload, e, offset);
+                offset = [offset[0] + DROP_CASCADE, offset[1] + DROP_CASCADE];
             }
-
-            // Fallback: upload a copy to /input and use a native loader that reads
-            // from there — image → LoadImage, video → LoadVideo (both accept
-            // uploads). Also covers dropped-from-Explorer blobs that have no path.
-            await this._dropViaUpload(payload, e, isVideo);
         } catch (err) {
             console.error("[bEpicViewer] drop-to-graph failed", err);
         }
+    },
+
+    /** The right loader node for one dragged item, placed at the drop point. */
+    async _createLoaderForPayload(payload, e, offset) {
+        const isVideo = payload.kind === "video";
+
+        // Image sequence → a directory-based loader that reads the whole
+        // sequence. VHS "Load Images (Path)" takes an arbitrary directory.
+        if (payload.isSequence && payload.seqDir) {
+            if (this._nodeTypeAvailable("VHS_LoadImagesPath")) {
+                this._createPathLoaderNode("VHS_LoadImagesPath", "directory", payload.seqDir, e, offset);
+                return;
+            }
+            // ComfyUI core has no arbitrary-path folder loader (the native
+            // LoadImageDataSetFromFolder only accepts input-dir subfolders),
+            // so without VHS fall through to a single-image loader below.
+        }
+
+        const absPath = this._absPathForPayload(payload);
+
+        // Preferred path: a VHS "(Path)" loader that references the ORIGINAL
+        // file on disk — no upload, no duplicate copy in /input.
+        if (absPath) {
+            const type   = isVideo ? "VHS_LoadVideoPath" : "VHS_LoadImagePath";
+            const widget = isVideo ? "video" : "image";
+            if (this._nodeTypeAvailable(type)) {
+                this._createPathLoaderNode(type, widget, absPath, e, offset);
+                return;
+            }
+            // VHS not installed → fall through to the native upload loader.
+        }
+
+        // Fallback: upload a copy to /input and use a native loader that reads
+        // from there — image → LoadImage, video → LoadVideo (both accept
+        // uploads). Also covers dropped-from-Explorer blobs that have no path.
+        await this._dropViaUpload(payload, e, isVideo, offset);
+    },
+
+    // Where a node dropped by this event goes, in graph space. `offset` steps a
+    // batch apart; null when the canvas can't map the event.
+    _dropPosition(e, offset) {
+        try {
+            const pos = app.canvas && app.canvas.convertEventToCanvasOffset(e);
+            if (pos) return [pos[0] + ((offset && offset[0]) || 0), pos[1] + ((offset && offset[1]) || 0)];
+        } catch (_) {}
+        return null;
     },
 
     // Absolute on-disk path for a history payload, or null when there isn't one
@@ -350,17 +406,15 @@ export const DnDMixin = {
         return !!(LG && LG.registered_node_types && LG.registered_node_types[type]);
     },
 
-    _createPathLoaderNode(type, widgetName, absPath, e) {
+    _createPathLoaderNode(type, widgetName, absPath, e, offset) {
         const LG = window.LiteGraph;
         if (!LG || !LG.createNode) { console.warn("[bEpicViewer] LiteGraph unavailable"); return; }
         const node = LG.createNode(type);
         if (!node) { console.warn("[bEpicViewer] could not create node", type); return; }
         app.graph.add(node);
 
-        try {
-            const pos = app.canvas.convertEventToCanvasOffset(e);
-            if (pos) node.pos = [pos[0] - (node.size?.[0] || 0) / 2, pos[1] - 20];
-        } catch (_) {}
+        const pos = this._dropPosition(e, offset);
+        if (pos) node.pos = [pos[0] - (node.size?.[0] || 0) / 2, pos[1] - 20];
 
         const w = node.widgets && (
             node.widgets.find((x) => x.name === widgetName) ||
@@ -374,12 +428,12 @@ export const DnDMixin = {
     // frames) or when VHS isn't installed: upload a copy to /input and drop a
     // native loader that reads from there.
     //   image → LoadImage (widget "image"),  video → LoadVideo (widget "file").
-    async _dropViaUpload(payload, e, isVideo) {
+    async _dropViaUpload(payload, e, isVideo, offset) {
         const uploaded = await this._uploadPayloadToInput(payload, isVideo);
         if (!uploaded) throw new Error("upload failed");
 
-        if (isVideo) this._createNativeLoaderNode("LoadVideo", "file",  uploaded, e);
-        else         this._createNativeLoaderNode("LoadImage", "image", uploaded, e);
+        if (isVideo) this._createNativeLoaderNode("LoadVideo", "file",  uploaded, e, offset);
+        else         this._createNativeLoaderNode("LoadImage", "image", uploaded, e, offset);
     },
 
     // Fetch a history payload's bytes and upload a copy to /input, returning the
@@ -414,17 +468,15 @@ export const DnDMixin = {
         return { path, name: data.name, subfolder: data.subfolder || "", type: data.type || "input" };
     },
 
-    _createNativeLoaderNode(type, widgetName, uploaded, e) {
+    _createNativeLoaderNode(type, widgetName, uploaded, e, offset) {
         const LG = window.LiteGraph;
         if (!LG || !LG.createNode) { console.warn("[bEpicViewer] LiteGraph unavailable"); return; }
         const node = LG.createNode(type);
         if (!node) { console.warn("[bEpicViewer] could not create node", type, "(is it installed?)"); return; }
         app.graph.add(node);
 
-        try {
-            const pos = app.canvas.convertEventToCanvasOffset(e);
-            if (pos) node.pos = [pos[0] - (node.size?.[0] || 0) / 2, pos[1] - 20];
-        } catch (_) {}
+        const pos = this._dropPosition(e, offset);
+        if (pos) node.pos = [pos[0] - (node.size?.[0] || 0) / 2, pos[1] - 20];
 
         const w = node.widgets && (
             node.widgets.find((x) => x.name === widgetName) ||

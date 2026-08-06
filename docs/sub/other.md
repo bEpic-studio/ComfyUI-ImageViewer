@@ -22,6 +22,12 @@ A **path bar** at the bottom of the viewport names whatever is currently on scre
 
 Right-click a node on the canvas and choose **Send to Image Viewer**. Nodes that already point at a file open it straight away; nodes further down the graph offer **Send to Image Viewer (run branch)** instead and are described [below](#nodes-with-no-file-run-branch). The entry is hidden on nodes with nothing to show, so it stays out of the way everywhere else.
 
+### On a Key
+
+The same thing is available as a command, so it can be given a keyboard shortcut: open **Settings → Keybinding**, search for `bEpic`, and assign a combo to **bEpic Viewer: Send Selected Node To Image Viewer**. It ships without one — every unmodified key is already spoken for.
+
+It acts on the canvas selection and behaves exactly as the menu entry would on each node: a loader opens its file, anything else runs its branch. Select several nodes and it sends all of them, skipping any with nothing to show; if none of them has anything, it says so in a toast rather than a dialog.
+
 For a loader, it works with whatever the node keeps in its widget — no rewiring, no workflow run:
 
 | Node kind | Widget holds | Opens as |

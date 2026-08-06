@@ -495,7 +495,7 @@ textarea.param-input {
 .history-header { color: #aaa; font-size: 11px; padding: 6px 6px; border-bottom: 1px solid #222; text-align: center; }
 .history-strip { padding: 6px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; align-items: center; }
 .history-strip { padding: 8px 6px 10px 6px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; align-items: center; flex: 1; min-height: 0; }
-.history-thumb { width: 72px; height: 52px; flex-shrink: 0; background: #050505; border-radius: 6px; overflow: hidden; border: 1px solid #1a1a1a; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02); }
+.history-thumb { position: relative; width: 72px; height: 52px; flex-shrink: 0; background: #050505; border-radius: 6px; overflow: hidden; border: 1px solid #1a1a1a; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02); }
 .history-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .history-thumb:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.6), 0 0 0 2px rgba(255,102,0,0.08); transform: translateY(-2px); }
 .history-thumb.selected { box-shadow: 0 0 0 2px rgba(255,102,0,0.9); }
@@ -503,6 +503,15 @@ textarea.param-input {
 /* highlight history items used for comparison */
 .history-thumb.compare { border: 2px dashed #0ff !important; }
 .history-thumb.base { border: 2px solid #f60 !important; }
+/* Multi-selection reads as a cool ring, well clear of the orange the open
+   snapshot uses and the cyan/orange pair compare mode pins — an item can be in
+   the selection and pinned for compare at the same time. */
+.history-thumb.multi { box-shadow: 0 0 0 2px #5b9bf5, 0 2px 8px rgba(0,0,0,0.6); }
+.history-thumb.multi::after {
+  content: ""; position: absolute; top: 3px; right: 3px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #5b9bf5; box-shadow: 0 0 0 1px rgba(0,0,0,0.55);
+}
 
 /* Viewport path bar overlay – shows the file path for folder-loaded images */
 .path-bar { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.72); color: #bbb; font-size: 11px; font-family: monospace; padding: 4px 8px; z-index: 10; user-select: text; cursor: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: all; border-top: 1px solid rgba(255,255,255,0.04); }

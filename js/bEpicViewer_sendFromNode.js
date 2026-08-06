@@ -296,6 +296,64 @@ async function sendNodeToViewer(node, source, ctx) {
     panel.openNodeMedia(node, data.tabs);
 }
 
+// A keystroke that hits nothing must not raise a modal — say it in a toast and
+// let the user carry on.
+function notify(severity, summary, detail) {
+    const add = app.extensionManager?.toast?.add;
+    if (add) app.extensionManager.toast.add({ severity, summary, detail, life: 4000 });
+    else console.log(`[bEpicViewer] ${summary}${detail ? ` -- ${detail}` : ""}`);
+}
+
+/** The nodes the canvas has selected, falling back to the one under the cursor. */
+function selectedGraphNodes() {
+    const canvas = app.canvas;
+    // `selected_nodes` is nodes only -- `selectedItems` also holds groups and
+    // reroutes, which have no media to send.
+    const nodes = Object.values(canvas?.selected_nodes || {}).filter(Boolean);
+    if (nodes.length === 0 && canvas?.current_node) nodes.push(canvas.current_node);
+    return nodes;
+}
+
+/**
+ * The keyboard route to the same thing the right-click entry does, acting on
+ * whatever is selected on canvas. Registered as a ComfyUI command so it can be
+ * given a combo in Settings → Keybinding; it ships with none, because every
+ * plain key worth having is already claimed.
+ *
+ * Nodes in the selection with nothing to show are skipped rather than refused:
+ * selecting a whole region and sending it should send what can be sent.
+ */
+export async function sendSelectionToViewer(ctx) {
+    const nodes = selectedGraphNodes();
+    if (nodes.length === 0) {
+        notify("info", "Send to Image Viewer", "Select a node on the canvas first.");
+        return;
+    }
+
+    const sendable = [];
+    for (const node of nodes) {
+        try {
+            const source = findMediaSource(node);
+            if (source) sendable.push({ node, source });
+        } catch (e) {
+            console.warn("[bEpicViewer] could not read node", node?.id, e);
+        }
+    }
+    if (sendable.length === 0) {
+        notify("warn", "Send to Image Viewer",
+               nodes.length === 1
+                   ? `"${nodes[0].title || nodes[0].type}" holds no media and has no viewable output.`
+                   : `None of the ${nodes.length} selected nodes has anything to show.`);
+        return;
+    }
+
+    // One at a time: a branch run queues a prompt, and firing several at once
+    // would race them through graphToPrompt.
+    for (const { node, source } of sendable) {
+        await sendNodeToViewer(node, source, ctx);
+    }
+}
+
 /** Add the menu entry to a node type. Call from beforeRegisterNodeDef. */
 export function registerSendToViewerMenu(nodeType, ctx) {
     const getExtraMenuOptions = nodeType.prototype.getExtraMenuOptions;
