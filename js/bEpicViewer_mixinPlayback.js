@@ -70,18 +70,35 @@ export const PlaybackMixin = {
 
     // ── Shape info overlay ───────────────────────────────────────────────────
 
-    updateShapeInfo() {
-        if (!this.showShape) { this.shapeOverlay.style.display = "none"; return; }
-        if (this.imgBase.naturalWidth) {
-            this.shapeOverlay.style.display = "block";
-            const batchSize = this.getImgCount();
-            const { naturalWidth: w, naturalHeight: h } = this.imgBase;
-            let text = `Tensor Shape: [${batchSize}, ${h}, ${w}, 3]`;
-            if (batchSize === 1) text += " [Still Frame]";
-            this.shapeOverlay.innerText = text;
-        } else {
-            this.shapeOverlay.style.display = "none";
+    // The decoded size of whatever is actually on screen. Video mode hides the
+    // <img> and shows the <video>, so reading the <img> there reports either
+    // nothing (a tab that never held a still) or the size of the image before
+    // it — which is why the overlay used to be blank over a clip, or worse,
+    // confidently wrong.
+    _displayedMediaSize() {
+        if (this._videoMode) {
+            const v = this.videoBase;
+            return (v && v.videoWidth) ? { w: v.videoWidth, h: v.videoHeight } : null;
         }
+        const i = this.imgBase;
+        return (i && i.naturalWidth) ? { w: i.naturalWidth, h: i.naturalHeight } : null;
+    },
+
+    updateShapeInfo() {
+        if (!this.shapeOverlay) return;
+        if (!this.showShape) { this.shapeOverlay.style.display = "none"; return; }
+
+        const size = this._displayedMediaSize();
+        // Nothing decoded yet. Every path that loads media calls back in here
+        // once it has (image onload, video loadedmetadata), so this is a wait,
+        // not a failure.
+        if (!size) { this.shapeOverlay.style.display = "none"; return; }
+
+        this.shapeOverlay.style.display = "block";
+        const batchSize = this.getImgCount();
+        let text = `Tensor Shape: [${batchSize}, ${size.h}, ${size.w}, 3]`;
+        if (batchSize === 1) text += " [Still Frame]";
+        this.shapeOverlay.innerText = text;
     },
 
     // ── Tab / image count helpers ────────────────────────────────────────────
@@ -329,6 +346,9 @@ export const PlaybackMixin = {
             this._videoSeek(idx, imgs[0]);
             this._updatePathBar(imgs[0]);
             this._updateCompareFrame(this.currentFrame);
+            // A clip that is already decoded can report its size now; one that
+            // has just been pointed at a new src reports it from _videoOnMeta.
+            this.updateShapeInfo();
             return;
         }
         this._exitVideoMode();
@@ -642,6 +662,9 @@ export const PlaybackMixin = {
         this.fitView();
         this._applyVideoPlaybackRate();
         if (this.timeline) this.timeline.value = this.currentFrame || 0;
+        // Both halves of the overlay only become true here: the clip's decoded
+        // size, and its frame count when the sender didn't state one.
+        this.updateShapeInfo();
         // The base video's decoded size is known only now. The compare aspect-match
         // scale (and the side-by-side layout) both depend on it, so a compare frame
         // that decoded before the base would otherwise stay mis-scaled — one media

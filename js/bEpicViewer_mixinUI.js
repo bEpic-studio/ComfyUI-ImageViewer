@@ -352,6 +352,9 @@ export const UIMixin = {
             if (this._exitVideoMode) this._exitVideoMode();
             this.imgBase.src = "";
             this._updatePathBar(null);
+            // Nothing on screen has no shape; without this the overlay keeps
+            // reporting the media of the tab we just left.
+            if (this.updateShapeInfo) this.updateShapeInfo();
             this.applyTimelineBounds(0);
             this.timeline.value = 0;
             this.container.querySelector('#cur-f').innerText = 0;
