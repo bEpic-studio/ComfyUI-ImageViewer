@@ -20,8 +20,13 @@
 // Nodes with no file of their own — a VAE Decode, an upscaler, a Save Image —
 // take the other route: their upstream branch is queued once and the result is
 // captured. See runBranchToViewer.
+//
+// The two tool nodes are read one step upstream: what you want in front of you
+// when you send a Roto or a SAM3 Collector to the viewer is the picture it is
+// drawn over, not the matte or the prompts it hands on. See findMediaSource.
 import { api } from "../../scripts/api.js";
 import { app } from "../../scripts/app.js";
+import { nodeToolKind, senderTabInfo } from "./bEpicViewer_nodeTools.js";
 
 const IMG_EXT = /\.(png|jpe?g|webp|gif|bmp|avif|tiff?|exr|dpx|tga|hdr|svg|ico)$/i;
 const VID_EXT = /\.(mp4|m4v|mov|webm|mkv|ogv|avi|mpe?g|wmv|flv)$/i;
@@ -140,14 +145,57 @@ export function findViewableTarget(node) {
  *
  * A file the node already points at always wins over running the graph — it is
  * instant and can't fail — so branch execution is the last resort.
+ *
+ * A tool node is read from whatever feeds it: its own outputs are a matte or a
+ * set of SAM3 prompts, and getting the picture it is drawn over in front of you
+ * is the whole point of sending one to the viewer. Unwired it has nothing to
+ * show at all — its matte output would otherwise be taken as the thing to show.
  */
 function findMediaSource(node) {
-    const ayon = findAyonMedia(node);
-    if (ayon) return ayon;
-    const widget = findMediaWidget(node);
-    if (widget) return { widget };
+    if (nodeToolKind(node)) {
+        const up = upstreamImage(node);
+        if (!up) return null;
+        // A loader feeding it opens its file with no queue at all — but only
+        // through its main output, since reading the file would show the
+        // picture where the link carries something else (a Load Image's MASK).
+        // Otherwise the link already names the slot to capture, so unlike the
+        // general case below there is no output to go hunting for.
+        return (up.slot === 0 ? heldMedia(up.node) : null) || {
+            target: { nodeId: up.node.id, slot: up.slot,
+                      title: node.title || node.type || "node" },
+        };
+    }
+
+    const held = heldMedia(node);
+    if (held) return held;
     const target = findViewableTarget(node);
     return target ? { target } : null;
+}
+
+/** The node feeding a tool node's picture, as { node, slot }, or null.
+ *
+ * Its `image` input, falling back to the first thing linked into it. Inputs the
+ * frontend created from a widget are skipped — a primitive wired into
+ * `roto_data` is a store, not something to look at.
+ */
+function upstreamImage(node) {
+    const linked = ((node && node.inputs) || [])
+        .filter((inp) => inp && inp.link != null && !inp.widget);
+    const inp = linked.find((i) => /^image$/i.test(i.name || "")) || linked[0];
+    if (!inp) return null;
+    const link = app.graph && app.graph.links && app.graph.links[inp.link];
+    if (!link || link.origin_id == null) return null;
+    const origin = app.graph.getNodeById(link.origin_id);
+    return origin ? { node: origin, slot: link.origin_slot || 0 } : null;
+}
+
+/** Media a node points at itself — an AYON container's file list, or a path
+ *  widget — carrying the node it was read from, or null when it has none. */
+function heldMedia(node) {
+    const ayon = findAyonMedia(node);
+    if (ayon) return { ...ayon, node };
+    const widget = findMediaWidget(node);
+    return widget ? { widget, node } : null;
 }
 
 function trimValues(node) {
@@ -162,8 +210,11 @@ function trimValues(node) {
 }
 
 // The request body + what to call the media in an error message, for either
-// source shape (a path widget, or an AYON container's file list).
-function resolveRequest(node, source) {
+// source shape (a path widget, or an AYON container's file list). The trim
+// widgets are read off `source.node` rather than the node that was clicked:
+// sending a tool node reads the loader feeding it, and it is that loader's
+// skip / cap / every-nth that decides which frames it will load.
+function resolveRequest(source) {
     if (source.files) {
         return {
             body:  { files: source.files, type: source.type || "input", label: source.label || "" },
@@ -172,7 +223,7 @@ function resolveRequest(node, source) {
     }
     const { value, type } = stripAnnotation(widgetString(source.widget));
     return {
-        body:  { value, type, hint: source.widget.name || "", ...trimValues(node) },
+        body:  { value, type, hint: source.widget.name || "", ...trimValues(source.node) },
         shown: value,
     };
 }
@@ -265,7 +316,7 @@ async function sendNodeToViewer(node, source, ctx) {
     const panel = ctx.getPanel && ctx.getPanel();
     if (!panel) { console.warn("[bEpicViewer] viewer panel not ready"); return; }
 
-    const { body, shown } = resolveRequest(node, source);
+    const { body, shown } = resolveRequest(source);
     if (!shown) return;
 
     let data = null;
@@ -384,19 +435,30 @@ export const SendFromNodeMixin = {
     // Open the tabs resolved from a loader node. Keyed by node id, so sending
     // again after pointing the node at another file refreshes the same tab and
     // stacks the previous media in its history strip instead of piling up tabs.
+    //
+    // A node that owns a viewer tab already — the send node and both tool nodes
+    // — fills that tab instead of a loader tab beside it: sending a Roto node
+    // lands its image exactly where the roto tools look for it, and running the
+    // workflow later refreshes the same tab rather than leaving a stale twin.
+    // Only the first tab can be the owned one; the rest (an AYON container
+    // holding several clips) keep loader keys.
     openNodeMedia(node, tabs) {
         if (!Array.isArray(tabs) || tabs.length === 0) return;
+
+        const owned = senderTabInfo(node);
 
         let firstKey = null;
         tabs.forEach((tab, i) => {
             const frames = Array.isArray(tab.frames) ? tab.frames : [];
             if (frames.length === 0) return;
-            const key = tabs.length > 1 ? `loader_${node.id}_${i}` : `loader_${node.id}`;
+            const mine = owned && i === 0;
+            const key = mine ? owned.key
+                      : (tabs.length > 1 ? `loader_${node.id}_${i}` : `loader_${node.id}`);
 
             if (this.pushHistorySnapshot(key, frames)) this.onHistoryPrepended?.(key);
 
             this.allTabs[key]           = frames;
-            this.tabLabels[key]         = this._nodeMediaLabel(tab);
+            this.tabLabels[key]         = mine ? owned.label : this._nodeMediaLabel(tab);
             this.tabSourceNodeIds[key]  = node.id;
             if (!firstKey) {
                 firstKey = key;
@@ -472,8 +534,11 @@ export const SendFromNodeMixin = {
 
         const kind = frames[0] && frames[0].kind === "video" ? "video"
                    : (frames.length > 1 ? "sequence" : "image");
-        this.openNodeMedia({ id: pending.sourceNodeId },
-                           [{ label: pending.label, kind, frames }]);
+        // The node itself, not just its id: openNodeMedia reads its widgets to
+        // work out whether it owns a tab of its own to put this in.
+        const source = app.graph.getNodeById(pending.sourceNodeId)
+                    || { id: pending.sourceNodeId };
+        this.openNodeMedia(source, [{ label: pending.label, kind, frames }]);
         return true;
     },
 };

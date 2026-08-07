@@ -53,6 +53,7 @@ Any node carrying an `IMAGE`, `MASK` or `VIDEO` output — a VAE Decode, an upsc
 - **Only the branch runs.** The prompt is pruned to the node and its upstream dependencies, so the workflow's other output nodes are left out — viewing a node never writes files as a side effect.
 - **Your graph is never touched.** The capture node is added to the queued prompt only, so node ids, wiring and undo history stay exactly as they were.
 - **Terminal nodes work too.** Save Image and Preview Image have no output slots, so they show what feeds them — a preview of what they would write, without writing it.
+- **Tool nodes show their input picture.** A **bEpic Image Viewer Roto** hands on a matte and a **SAM3 Collector** hands on prompts, so sending one shows the image feeding it instead — the thing you are about to draw over. It lands in that node's own tab, so the Roto / SAM3 tools attach to it immediately and running the workflow later refreshes the same tab. Where a loader feeds the node directly its file opens straight away, with no queue at all.
 - Unchanged upstream nodes come from ComfyUI's cache, so a second run is usually instant.
 - Re-running lands in the same tab and stacks the previous result in its history strip, which makes it easy to A/B a parameter change against the last one.
 
