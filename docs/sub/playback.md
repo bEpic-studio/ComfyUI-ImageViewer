@@ -22,6 +22,27 @@ Hold <kbd>Ctrl</kbd> while dragging on the timeline to define a sub-range. The s
 
 To clear the sub-range and return to full-sequence playback, <kbd>Ctrl</kbd>+click outside the selection.
 
+### Pulling a Frame Out onto the Graph
+
+Hold <kbd>Shift</kbd> over the timeline and it turns blue: it is now a drag source for the frame on screen. Drag it onto the ComfyUI node graph and you get a **Load Image** node holding that one frame — VHS *Load Image (Path)* where VHS is installed, the native **LoadImage** otherwise. Drop it *onto* an existing loader node instead and that node's file is swapped, exactly as [dropping a history thumbnail](tabs-history.md#history-snapshots) does.
+
+Where the frame comes from depends on what the tab holds:
+
+| Tab | What happens | Where the file ends up |
+|---|---|---|
+| Image sequence | Nothing is written — that frame is already a file | stays where it is |
+| `mp4` / `mov` / `webm` | The frame is decoded server-side and written as a PNG | **next to the clip**, named `<clip>_f00042.png` |
+| A clip dropped in from Explorer | The frame is read out of the player itself — the server never had the file | `output/extracted_frames/` |
+
+Notes:
+
+- Extracting the same frame twice reuses the PNG already on disk rather than decoding again.
+- A clip whose own folder can't be written (a read-only mount, media served off another machine) falls back to `output/extracted_frames/` too.
+- Frames pulled from a clip in ComfyUI's `temp/` land in `temp/` beside it, and are cleaned up with the rest of it — the same as the clip the frame came from.
+- Extraction needs a video decoder: `imageio-ffmpeg` (which the save-to-output video formats already use) or `opencv-python`. Without either, the viewer says so instead of dropping an empty node.
+
+<kbd>Shift</kbd> is only borrowed while the cursor is over the timeline — scrubbing and <kbd>Ctrl</kbd>-drag range select are untouched.
+
 ---
 
 ## FPS Control

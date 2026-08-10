@@ -332,6 +332,79 @@ try:
                 "path": os.path.abspath(fpath),
             })
 
+        async def _bepic_extract_frame(request):
+            """Write one frame of a clip out as a PNG file and say where it landed.
+
+            Backs shift-dragging a frame off the viewer's timeline onto the node
+            graph. Two body shapes, matching the two kinds of clip the viewer can
+            be playing:
+              { path | filename+subfolder+type, frame } — a video the server can
+                read; the PNG is written next to it (see media_resolve).
+              { dataurl, name } — a clip that exists only in the browser (dropped
+                in from Explorer), whose frame the viewer grabbed off the <video>
+                itself. There is no original for it to sit beside, so those land
+                in ./output/extracted_frames.
+
+            Returns { path, filename } — an absolute path, so the caller can point
+            a path-based loader straight at it.
+            """
+            if media_resolve is None:
+                return web.json_response(
+                    {"error": "media resolver unavailable on this install"}, status=500)
+            try:
+                data = await request.json()
+            except Exception:
+                return web.json_response({"error": "invalid JSON body"}, status=400)
+
+            try:
+                frame = max(0, int(data.get("frame") or 0))
+            except Exception:
+                frame = 0
+
+            dataurl = data.get("dataurl") or ""
+            if dataurl:
+                m = re.match(r"^data:image/(png|jpeg);base64,(.*)$", dataurl, re.DOTALL)
+                if not m:
+                    return web.json_response(
+                        {"error": "expected a data:image/png;base64 payload"}, status=400)
+                try:
+                    raw = base64.b64decode(m.group(2))
+                except Exception as e:
+                    return web.json_response({"error": f"base64 decode failed: {e}"}, status=400)
+                stem = os.path.splitext(os.path.basename(str(data.get("name") or "clip")))[0]
+                stem = "".join(c for c in stem if c.isalnum() or c in ("_", "-")) or "clip"
+                try:
+                    folder = media_resolve.extract_dir_fallback()
+                    os.makedirs(folder, exist_ok=True)
+                    # Same naming as a server-side extract, so a folder of frames
+                    # reads the same however they got there.
+                    fpath = os.path.join(folder,
+                                         media_resolve.extract_frame_name(stem, frame))
+                    with open(fpath, "wb") as fh:
+                        fh.write(raw)
+                except Exception as e:
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=500)
+                return web.json_response({"path": os.path.abspath(fpath),
+                                          "filename": os.path.basename(fpath)})
+
+            raw_path = data.get("path") or data.get("filename") or ""
+            path = media_resolve.resolve_path(raw_path, str(data.get("type") or ""))
+            if not path or not os.path.isfile(path):
+                return web.json_response(
+                    {"error": f"could not find {raw_path!r} on disk"}, status=404)
+
+            try:
+                out = media_resolve.extract_frame(path, frame)
+            except ValueError as e:
+                return web.json_response({"error": str(e)}, status=422)
+            except Exception as e:
+                traceback.print_exc()
+                return web.json_response({"error": str(e)}, status=500)
+
+            return web.json_response({"path": os.path.abspath(out),
+                                      "filename": os.path.basename(out)})
+
         async def _bepic_resolve_media(request):
             """Resolve a loader node's media into viewer tabs.
 
@@ -420,6 +493,8 @@ try:
         _safe_add("GET", "/api/bepic/view_file", _bepic_view_file)
         _safe_add("POST", "/bepic/save_annotation", _bepic_save_annotation)
         _safe_add("POST", "/api/bepic/save_annotation", _bepic_save_annotation)
+        _safe_add("POST", "/bepic/extract_frame", _bepic_extract_frame)
+        _safe_add("POST", "/api/bepic/extract_frame", _bepic_extract_frame)
         _safe_add("POST", "/bepic/resolve_media", _bepic_resolve_media)
         _safe_add("POST", "/api/bepic/resolve_media", _bepic_resolve_media)
         _safe_add("GET", "/bepic/resolve_media", _bepic_resolve_media)

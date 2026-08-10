@@ -65,6 +65,7 @@ The extension registers the following HTTP routes on the ComfyUI server. These a
 | GET | `/bepic/view_file?path=…` | Serve an external image file |
 | GET | `/bepic/pick_folder` | Open a native folder picker dialog |
 | GET | `/bepic/clear_cache` | Delete all `bEpic_*` temp files |
+| POST | `/bepic/extract_frame` | Write one frame of a clip out as a PNG beside it, and report where it landed |
 | GET | `/bepic/viewer` | Standalone viewer-only HTML page |
 | GET | `/bepic/health` | Health check — returns 200 if running |
 

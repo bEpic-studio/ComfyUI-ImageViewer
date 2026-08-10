@@ -394,6 +394,7 @@ class ViewerPanel extends HTMLElement {
         this._initTools();
         this.setupExplorerDrop();      // OS files → viewport
         this.setupGraphDropTarget();   // history thumb → ComfyUI graph
+        this.setupTimelineFrameDrag(); // shift-drag the frame on screen → graph
 
         this.currentParamNodeId  = null;
         this.currentHistoryKey   = null;

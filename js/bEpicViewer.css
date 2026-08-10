@@ -321,6 +321,11 @@ option { text-align: left; }
 #timeline::-webkit-slider-thumb { -webkit-appearance: none; height: 25px; width: 8px; background: #fff; border: none; border-radius: 1px; cursor: ew-resize; box-shadow: 0 0 2px rgba(0,0,0,0.8); }
 #timeline::-moz-range-thumb { height: 25px; width: 8px; background: #fff; border: none; border-radius: 1px; cursor: ew-resize; box-shadow: 0 0 2px rgba(0,0,0,0.8); }
 
+/* Shift held over the timeline arms it as a drag source for the frame on screen
+   (setupTimelineFrameDrag). Say so, since nothing else about the control has
+   changed and the scrub is momentarily not what a press does. */
+.timeline-container.bepic-frame-drag { cursor: grab; border-color: #6cf; box-shadow: 0 0 4px rgba(102, 204, 255, 0.5); }
+
 .timeline-range {
     position: absolute; top: 0; bottom: 0;
     background: rgba(255, 102, 0, 0.4);

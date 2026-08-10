@@ -284,6 +284,111 @@ def probe_video(path):
     return (fps if fps > 0 else 0.0), max(0, frames)
 
 
+# ── Single-frame extraction ──────────────────────────────────────────────────
+#
+# Pulling one frame out of a clip the viewer is playing, so it can be handed to
+# the graph as a still. The PNG is written NEXT TO the video it came from — that
+# is where the rest of that shot's media already lives, and it keeps the frame
+# addressable by a path loader rather than buried in a cache — falling back to
+# ./output/extracted_frames only when the video's own folder can't be written
+# (a read-only mount, or media served off another machine).
+
+_EXTRACT_DIR = "extracted_frames"
+
+
+def _decode_video_frame(video_path, index):
+    """Frame `index` of a video as an [H,W,3] uint8 array, or None.
+
+    imageio first — it is the decoder this extension already encodes with — then
+    OpenCV, which some installs have instead. Same order as probe_video.
+    """
+    import numpy as np
+    try:
+        import imageio
+        reader = imageio.get_reader(video_path)
+        try:
+            return np.asarray(reader.get_data(int(index)))[:, :, :3]
+        finally:
+            reader.close()
+    except Exception:
+        pass
+    try:
+        import cv2
+        cap = cv2.VideoCapture(video_path)
+        try:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(index))
+            ok, frame = cap.read()
+        finally:
+            cap.release()
+        if ok and frame is not None:
+            return np.asarray(frame)[:, :, ::-1]        # OpenCV hands back BGR
+    except Exception:
+        pass
+    return None
+
+
+def extract_dir_fallback():
+    """./output/extracted_frames — where frames go when they can't sit beside
+    their source (and where frames of a browser-only clip always go)."""
+    return os.path.join(folder_paths.get_output_directory(), _EXTRACT_DIR)
+
+
+def _extract_targets(video_path, name):
+    """Where an extracted frame may be written, best first."""
+    targets = []
+    folder = os.path.dirname(video_path)
+    if folder:
+        targets.append(os.path.join(folder, name))
+    try:
+        targets.append(os.path.join(extract_dir_fallback(), name))
+    except Exception:
+        pass
+    return targets
+
+
+def extract_frame_name(video_path, index):
+    """Filename an extracted frame is given: the clip's own name plus the frame
+    number, so a folder of extracts still says which clip each came from."""
+    stem = os.path.splitext(os.path.basename(video_path))[0]
+    return f"{stem}_f{int(index):05d}.png"
+
+
+def extract_frame(video_path, index):
+    """Write frame `index` of `video_path` out as a PNG and return its path.
+
+    A frame already extracted is handed back as it stands rather than decoded
+    again, so dragging the same one out twice costs nothing. Raises ValueError
+    with a user-facing message when the clip can't be decoded or written.
+    """
+    from PIL import Image
+
+    index = max(0, int(index))
+    targets = _extract_targets(video_path, extract_frame_name(video_path, index))
+    if not targets:
+        raise ValueError("nowhere to write the extracted frame")
+    for dst in targets:
+        if _cached(dst, video_path):
+            return dst
+
+    arr = _decode_video_frame(video_path, index)
+    if arr is None:
+        raise ValueError(
+            f"could not decode frame {index} of {os.path.basename(video_path)} "
+            f"— this install has neither imageio-ffmpeg nor opencv-python, or "
+            f"the clip is shorter than that")
+
+    img = Image.fromarray(arr)
+    last = None
+    for dst in targets:
+        try:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            img.save(dst, compress_level=4)
+            return dst
+        except Exception as e:
+            last = e
+    raise ValueError(f"could not write the extracted frame: {last}")
+
+
 def _video_thumb(path):
     """Temp PNG poster for a video (an <img> in the history strip can't show the
     clip itself), cached per source file. None when no decoder is available."""

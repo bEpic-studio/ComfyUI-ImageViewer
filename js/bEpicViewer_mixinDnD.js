@@ -20,6 +20,12 @@
 //      whole selection, one loader per snapshot, cascaded from the drop point. A
 //      batch never replaces a node in place: a loader holds one file, so there is
 //      nothing to say which of them should win.
+//   3. Timeline → ComfyUI graph:  shift-drag off the timeline to take just the
+//      frame on screen. A frame of an image sequence is already a file and is
+//      referenced as it lies; a frame inside an mp4/mov is extracted to a PNG
+//      beside the clip (server-side, /bepic/extract_frame) and that file is what
+//      the loader points at. Either way the drop lands as a single-image loader
+//      through the same route as 2, replacement onto an existing node included.
 import { api } from "../../scripts/api.js";
 import { app } from "../../scripts/app.js";
 
@@ -262,6 +268,151 @@ export const DnDMixin = {
         catch (_) { return false; }
     },
 
+    // ── 3. Timeline → ComfyUI graph (the frame on screen) ────────────────────
+
+    /** Make the timeline a drag source for the frame currently displayed.
+     *
+     * Armed only while Shift is held over it. A draggable element swallows the
+     * press that would otherwise start a drag on its children, so arming it
+     * unconditionally would cost the scrub — and Ctrl-drag range select with it.
+     */
+    setupTimelineFrameDrag() {
+        const box = this.shadowRoot.getElementById("timeline-container");
+        if (!box || this._timelineDragBound) return;
+        this._timelineDragBound = true;
+
+        const arm = (on) => {
+            // Cheap on purpose — this runs on every mousemove over the timeline.
+            // Whether the frame can actually be carried is settled at dragstart.
+            on = !!(on && (this._baseFrames() || []).length);
+            if (!!this._timelineDragArmed === on) return;
+            this._timelineDragArmed = on;
+            box.draggable = on;
+            box.classList.toggle("bepic-frame-drag", on);
+            // The range input handles its own pointer events, so it has to stand
+            // aside for the container to receive the press that begins the drag.
+            if (this.timeline) this.timeline.style.pointerEvents = on ? "none" : "";
+        };
+
+        box.addEventListener("mousemove",  (e) => { this._overTimeline = true;  arm(e.shiftKey); });
+        box.addEventListener("mouseenter", (e) => { this._overTimeline = true;  arm(e.shiftKey); });
+        box.addEventListener("mouseleave", ()  => { this._overTimeline = false; arm(false); });
+
+        // Shift pressed or let go with the cursor already parked on the timeline,
+        // which no mouse event would report.
+        const win = this.container.ownerDocument.defaultView || window;
+        win.addEventListener("keydown", (e) => { if (e.key === "Shift" && this._overTimeline) arm(true); });
+        win.addEventListener("keyup",   (e) => { if (e.key === "Shift") arm(false); });
+
+        box.addEventListener("dragstart", (e) => {
+            const item = this._currentFrameDragItem();
+            if (!item) { e.preventDefault(); return; }
+            try {
+                e.dataTransfer.setData("application/x-bepic-history", JSON.stringify({ items: [item] }));
+                e.dataTransfer.effectAllowed = "copy";
+                const el = this._videoMode ? this.videoBase : this.imgBase;
+                if (el && e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(el, 20, 20);
+            } catch (_) {}
+        });
+        // The drag ends wherever it ends; Shift may well be up by then.
+        box.addEventListener("dragend", () => arm(false));
+    },
+
+    /** The frame on screen, as a graph-drop payload, or null when there is none.
+     *
+     * A frame of an image sequence is a file already, so it is referenced where
+     * it lies. A frame inside a video container is not, and is marked with
+     * `extractFrame` for the drop to turn into a real PNG — deferred to the drop
+     * because the user may yet let go somewhere that isn't the graph.
+     */
+    _currentFrameDragItem() {
+        const imgs = this._baseFrames();
+        if (!imgs || imgs.length === 0) return null;
+
+        if (this._frameIsVideo(imgs[0])) {
+            const item = this._historyDragItem(imgs[0], [imgs[0]]);
+            if (!item) return null;
+            return { ...item, extractFrame: Math.max(0, Math.floor(this.currentFrame || 0)) };
+        }
+
+        const i = imgs[this.displayFrameToImageIndex(this.currentFrame, imgs.length)];
+        // A one-frame snapshot: never a sequence, whatever the tab holds.
+        return i ? this._historyDragItem(i, [i]) : null;
+    },
+
+    /** Turn a "frame N of this clip" payload into a plain image payload, or null.
+     *
+     * The server writes the PNG — beside the clip for a video it can read, and
+     * under ./output/extracted_frames for one that only exists in the browser,
+     * whose pixels are grabbed off the <video> and sent along.
+     */
+    async _extractedFramePayload(p) {
+        const frame = Math.max(0, Math.floor(p.extractFrame || 0));
+        const body  = { frame };
+
+        if (p.dropped || (!p.path && !p.filename)) {
+            const dataurl = this._grabVideoFrameDataUrl();
+            if (!dataurl) {
+                alert("bEpic Viewer – could not read this clip's frame out of the player.");
+                return null;
+            }
+            body.dataurl = dataurl;
+            body.name    = p.filename || "clip";      // names the written PNG
+        } else {
+            body.path      = p.path || "";
+            body.filename  = p.filename || "";
+            body.subfolder = p.subfolder || "";
+            body.type      = p.type || "";
+        }
+
+        let data = null;
+        try {
+            const resp = await api.fetchApi("/bepic/extract_frame", {
+                method:  "POST",
+                headers: { "Content-Type": "application/json" },
+                body:    JSON.stringify(body),
+            });
+            data = await resp.json();
+        } catch (err) {
+            console.error("[bEpicViewer] extract_frame failed", err);
+            alert(`bEpic Viewer – could not reach the server.\n${err.message || err}`);
+            return null;
+        }
+        if (!data || data.error || !data.path) {
+            const msg = (data && data.error) || "nothing came back";
+            console.warn("[bEpicViewer] extract frame:", msg);
+            alert(`bEpic Viewer – could not extract frame ${frame}:\n${msg}`);
+            return null;
+        }
+
+        // An absolute path outside ./output|temp is exactly what `external` is
+        // for — it is how the frame is fetched back for a preview or an upload.
+        return {
+            path: data.path, filename: data.filename || null,
+            subfolder: "", type: null, url: null,
+            external: true, dropped: false, kind: "image",
+            isSequence: false, seqDir: null, seqCount: 0, thumb: null,
+        };
+    },
+
+    // The frame the <video> is showing, as a PNG data URL. Blob and same-origin
+    // sources only — which is everything the viewer plays — since a tainted
+    // canvas can't be read back.
+    _grabVideoFrameDataUrl() {
+        const v = this.videoBase;
+        if (!v || !v.videoWidth) return null;
+        try {
+            const c = document.createElement("canvas");
+            c.width  = v.videoWidth;
+            c.height = v.videoHeight;
+            c.getContext("2d").drawImage(v, 0, 0);
+            return c.toDataURL("image/png");
+        } catch (err) {
+            console.warn("[bEpicViewer] could not read the video frame", err);
+            return null;
+        }
+    },
+
     setupGraphDropTarget() {
         if (this._graphDropBound) return;
         const attach = () => {
@@ -319,6 +470,17 @@ export const DnDMixin = {
         const list = (Array.isArray(items) ? items : [items]).filter(Boolean);
         if (list.length === 0) return;
         try {
+            // A frame dragged off the timeline arrives as "frame N of this clip".
+            // Make it a real file before anything else looks at it, so both
+            // routes below — replacing a loader's media and creating a node —
+            // see a plain image and need to know nothing about extraction.
+            for (let i = 0; i < list.length; i++) {
+                if (list[i].extractFrame == null) continue;
+                const img = await this._extractedFramePayload(list[i]);
+                if (!img) return;              // already reported to the user
+                list[i] = img;
+            }
+
             // Dropped onto an existing loader node whose widget matches the dragged
             // media type → swap that node's file in place (keeps its wiring/position)
             // rather than spawning a new node. Falls through to node-creation when

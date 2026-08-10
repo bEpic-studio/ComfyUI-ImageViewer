@@ -67,6 +67,7 @@ See [Selecting Several Snapshots](tabs-history.md#selecting-several-snapshots) f
 | Click timeline | Jump to frame at that position |
 | Drag timeline | Scrub through frames |
 | <kbd>Ctrl</kbd>+drag timeline | Define a playback sub-range (highlighted in orange) |
+| <kbd>Shift</kbd>+drag timeline onto the graph | Drop the frame on screen as a Load Image node — a video frame is [extracted to a PNG beside the clip](playback.md#pulling-a-frame-out-onto-the-graph) |
 
 ## Workflow
 
