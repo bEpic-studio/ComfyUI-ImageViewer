@@ -1148,23 +1148,37 @@ export const UIMixin = {
         this.updateToolOverlay && this.updateToolOverlay();
     },
 
+    // The white outline around the picture. It marks the edge of the frame, which
+    // matters most exactly where the picture is dark and its own border is
+    // invisible, so it is worth keeping up whenever there is a frame to outline.
+    //
+    // Read from whichever layer is actually showing, not from imgBase. A video
+    // base hides imgBase, leaving it 0-sized with a naturalWidth belonging to
+    // whatever image was on screen before it — so keying off imgBase silently
+    // dropped the outline for every video, which is what "it vanishes from time
+    // to time" was. Contact Sheet is the one case with nothing to outline: the
+    // two frames are laid out side by side and CSS hides #img-frame there.
     updateImageFrame() {
-        if (!this.imgFrame || !this.imgBase || !this.viewport) return;
-        if (this.sliderMode === 'contact' || !this.imgBase.naturalWidth || !this.imgBase.naturalHeight) {
+        if (!this.imgFrame || !this.viewport) return;
+        const el  = this._activeBaseEl && this._activeBaseEl();
+        const nat = this._baseMediaSize ? this._baseMediaSize() : { w: 0, h: 0 };
+        if (this.sliderMode === 'contact' || !el || !nat.w || !nat.h) {
             this.imgFrame.style.display = 'none';
             return;
         }
 
-        const elW = this.imgBase.clientWidth;
-        const elH = this.imgBase.clientHeight;
+        // clientWidth, not offsetWidth: the outline traces the picture inside the
+        // layer's content box, and the transform is copied over separately below.
+        const elW = el.clientWidth;
+        const elH = el.clientHeight;
         if (!elW || !elH) {
             this.imgFrame.style.display = 'none';
             return;
         }
 
-        const fitScale = Math.min(elW / this.imgBase.naturalWidth, elH / this.imgBase.naturalHeight);
-        const drawW = Math.max(1, this.imgBase.naturalWidth * fitScale);
-        const drawH = Math.max(1, this.imgBase.naturalHeight * fitScale);
+        const fitScale = Math.min(elW / nat.w, elH / nat.h);
+        const drawW = Math.max(1, nat.w * fitScale);
+        const drawH = Math.max(1, nat.h * fitScale);
         const left = (elW - drawW) * 0.5;
         const top = (elH - drawH) * 0.5;
 
@@ -1172,7 +1186,7 @@ export const UIMixin = {
         this.imgFrame.style.top = `${top}px`;
         this.imgFrame.style.width = `${drawW}px`;
         this.imgFrame.style.height = `${drawH}px`;
-        this.imgFrame.style.transform = this.imgBase.style.transform || '';
+        this.imgFrame.style.transform = el.style.transform || '';
         this.imgFrame.style.display = 'block';
     },
 

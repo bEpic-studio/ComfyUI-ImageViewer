@@ -566,11 +566,17 @@ export const PlaybackMixin = {
             v.addEventListener("timeupdate",     () => this._videoOnTimeUpdate());
             v.addEventListener("loadedmetadata", () => this._videoOnMeta());
             v.addEventListener("ended",          () => this._videoOnEnded());
-            // The base's decoded size feeds the compare layer's aspect match, and
-            // `resize` is the one event that always fires when it becomes known —
-            // including when the clip was already loaded before compare mode was
-            // switched on.
-            v.addEventListener("resize",         () => this._syncCompareLayout());
+            // The base's decoded size feeds both the compare layer's scale and the
+            // white frame outline, and `resize` is the one event that always fires
+            // when it becomes known — including when the clip was already loaded
+            // before compare mode was switched on. The outline is refreshed here
+            // too: _syncCompareLayout returns early when not comparing, so on a
+            // plain video tab this was the only thing left to draw it.
+            v.addEventListener("resize", () => {
+                this.updateImageFrame && this.updateImageFrame();
+                this.updateToolOverlay && this.updateToolOverlay();
+                this._syncCompareLayout();
+            });
             // A clip the server won't serve any more fails here rather than in an
             // <img>. Hand it to the history prune, which confirms with the server
             // before dropping anything.
