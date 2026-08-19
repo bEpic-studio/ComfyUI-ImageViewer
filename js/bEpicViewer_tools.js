@@ -71,21 +71,65 @@ export const ToolsMixin = {
         // Annotation mixin one-time setup (per-tab item store + styles).
         this._annotInit?.();
 
-        // Keep the overlay AND the white image-frame outline aligned when the
-        // viewport resizes (e.g. a side panel is toggled). updateImageFrame
-        // recomputes #img-frame from the image's new client size.
+        try { this._watchViewportResize(); } catch (e) { /* never abort init over this */ }
+
+        this.setActiveTool("none");
+    },
+
+    // Keep the overlay, the white image-frame outline and the compare layout
+    // aligned when the viewport resizes — a side panel is toggled, or the
+    // undocked popout window is dragged or maximised. updateImageFrame recomputes
+    // #img-frame from the image's new client size; _syncCompareLayout re-derives
+    // the compare scale and the wipe seam, both measured against the viewport box.
+    //
+    // Re-callable, and it has to be. A ResizeObserver only reports targets that
+    // live in its OWN document, so the moment undocking moves the container into
+    // the popout's document, an observer built in the ComfyUI window stops
+    // delivering — measured: zero notifications for a popout resize that took the
+    // element from 500 to 934px. Undock and re-dock rebuild this in whichever
+    // realm the container has landed in.
+    _watchViewportResize() {
+        try { this._toolResizeObs && this._toolResizeObs.disconnect(); } catch (e) {}
+        this._toolResizeObs = null;
+        try { this._viewportResizeOff && this._viewportResizeOff(); } catch (e) {}
+        this._viewportResizeOff = null;
+        if (!this.viewport) return;
+
+        const redraw = () => {
+            this.updateImageFrame && this.updateImageFrame();
+            this.updateToolOverlay && this.updateToolOverlay();
+            this._syncCompareLayout && this._syncCompareLayout();
+        };
+
+        // Read the realm off the observed element itself rather than through a
+        // helper on another mixin: this runs during startup, and a throw here
+        // would take the rest of _initTools down with it.
+        let win = window;
         try {
-            this._toolResizeObs = new ResizeObserver(() => {
-                this.updateImageFrame && this.updateImageFrame();
-                this.updateToolOverlay && this.updateToolOverlay();
-                // The compare aspect match and the wipe seam are both measured
-                // against the viewport box, so they go stale on a resize too.
-                this._syncCompareLayout && this._syncCompareLayout();
-            });
+            const doc = this.viewport.ownerDocument;
+            if (doc && doc.defaultView) win = doc.defaultView;
+        } catch (e) {}
+
+        try {
+            const RO = win.ResizeObserver || ResizeObserver;
+            this._toolResizeObs = new RO(redraw);
             this._toolResizeObs.observe(this.viewport);
         } catch (e) {}
 
-        this.setActiveTool("none");
+        // Belt and braces while undocked. The observer above catches resizes that
+        // come from inside the layout (a side panel toggling); this catches the
+        // user dragging or maximising the popout itself, without depending on how
+        // the browser treats an observer whose target was adopted into another
+        // document.
+        try {
+            if (win !== window && win.addEventListener) {
+                const onResize = () => redraw();
+                win.addEventListener('resize', onResize);
+                this._viewportResizeOff = () => {
+                    try { win.removeEventListener('resize', onResize); } catch (e) {}
+                };
+            }
+        } catch (e) {}
     },
 
     _injectToolStyles() {

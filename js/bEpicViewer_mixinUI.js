@@ -171,6 +171,40 @@ export const UIMixin = {
 
     // ── Undock / re-dock ─────────────────────────────────────────────────────
 
+    // The window the viewer's DOM is currently living in: the ComfyUI tab while
+    // docked, the popout while undocked. Anything realm-bound — ResizeObserver,
+    // requestAnimationFrame — has to be taken from here rather than from the
+    // module's own `window`, which goes on pointing at the ComfyUI tab either way
+    // (and stops painting altogether once the popout covers it).
+    _viewerWindow() {
+        try {
+            const doc = this.container && this.container.ownerDocument;
+            if (doc && doc.defaultView) return doc.defaultView;
+        } catch (e) {}
+        return window;
+    },
+
+    // Re-derive everything measured against the viewport box, after the container
+    // has been moved between windows. The move itself resizes that box — the
+    // popout opens at its own size — and it happens while the old watcher is
+    // still attached to the document being left behind, so nothing else notices.
+    _afterViewportMoved() {
+        // A frame queued in the window just left will never run, and the guard
+        // would then block every later sync.
+        this._compareSyncRaf = null;
+        const run = () => {
+            this.updateImageFrame && this.updateImageFrame();
+            this.updateToolOverlay && this.updateToolOverlay();
+            this._syncCompareLayout && this._syncCompareLayout();
+        };
+        run();
+        // Once more after the new window has laid the container out: a popout that
+        // has only just been created reports its real size a frame late.
+        const win = this._viewerWindow();
+        if (win && win.requestAnimationFrame) win.requestAnimationFrame(run);
+        else if (win && win.setTimeout) win.setTimeout(run, 0);
+    },
+
     toggleUndock() {
         if (this.popoutWindow && !this.popoutWindow.closed) {
             this.popoutWindow.onbeforeunload = null;
@@ -224,6 +258,12 @@ export const UIMixin = {
             this.popoutWindow.addEventListener('keydown', (e) => this.handleKeyDown(e), true);
             this.popoutWindow.addEventListener('keyup', (e) => this.handleKeyUp(e));
             this.bindClearButton();
+            // The viewport now belongs to the popout's document, so whatever
+            // watches it for size changes has to be rebuilt there — otherwise
+            // resizing or maximising the popout resizes the picture but never
+            // rescales the compare layer or the frame outline against it.
+            this._watchViewportResize && this._watchViewportResize();
+            this._afterViewportMoved && this._afterViewportMoved();
         }
     },
 
@@ -237,6 +277,8 @@ export const UIMixin = {
         this.container.style.fontFamily = "";
         this.style.display              = 'flex';
         this.bindClearButton();
+        this._watchViewportResize && this._watchViewportResize();
+        this._afterViewportMoved && this._afterViewportMoved();
     },
 
     // ── Clear-cache button (window-agnostic) ─────────────────────────────────
@@ -704,9 +746,9 @@ export const UIMixin = {
             }
         }
         this.applyContactClass();
-        // Transform first: switching seam orientation changes which axis the
-        // compare layer is scaled to match, and the wipe seam is measured against
-        // the compare layer's resulting on-screen box.
+        // Transform first: the wipe seam is measured against the compare layer's
+        // resulting on-screen box, so that box has to be current before the seam
+        // is placed against it.
         this.updateTransform();
         this.fitView();
         this.updateCompareVisuals();
@@ -770,18 +812,29 @@ export const UIMixin = {
     },
 
     // Base and compare each get object-fit:contain against the same box, so media
-    // with different aspect ratios render at different sizes. This returns the
-    // extra uniform scale that lines the compare frame up with the base along the
-    // axis the wipe actually runs across:
+    // of a different resolution or aspect ratio render at different sizes. This
+    // returns the extra uniform scale that fits the compare frame INSIDE the
+    // base's rendered frame:
     //
-    //   vertical seam   → slides left/right → match rendered HEIGHTS, so the top
-    //                     and bottom edges of both frames coincide
-    //   horizontal seam → slides up/down    → match rendered WIDTHS, so the left
-    //                     and right edges coincide
+    //   same aspect ratio      → the two frames land exactly on top of each other,
+    //                            whatever resolutions they were written at
+    //   different aspect ratio → the compare is contained by the base's frame, so
+    //                            it never spills outside the picture being wiped
+    //                            against, and both stay centred on the same point
     //
-    // Matching the wrong axis leaves the two clips at visibly different sizes as
-    // the seam crosses them. It is exactly 1 when both already render at the same
-    // size on that axis, so same-resolution compares are unaffected.
+    // Deliberately the same in both wipe directions. Matching only the axis the
+    // seam travels across lines up two edges but lets the other axis run away: a
+    // 480x832 clip wiped against a 1920x1080 plate came out three times the
+    // plate's height in horizontal split, and 1.7x its width in vertical — so the
+    // seam crossed two pictures at visibly different sizes either way. It is
+    // exactly 1 when both already render at the same size, so same-resolution
+    // compares (the usual history-snapshot case) are unaffected.
+    //
+    // The RESULT does not depend on the window size: the compare always lands at
+    // a fixed multiple of the base's rendered frame, so the two grow and shrink
+    // together. It does have to be RE-DERIVED when the viewport box changes,
+    // though, because each layer letterboxes into that box independently — see
+    // _watchViewportResize.
     _compareExtraScale() {
         if (!this.isComparing || this.sliderMode === 'contact') return 1;
         // Base decoded size (a video base hides imgBase, so read the <video>).
@@ -790,11 +843,11 @@ export const UIMixin = {
         if (!base.w || !base.h || !cmp.w || !cmp.h) return 1;
         const box = this.viewport.getBoundingClientRect();
         if (!box.width || !box.height) return 1;
-        const bScale = Math.min(box.width / base.w, box.height / base.h);
-        const cScale = Math.min(box.width / cmp.w,  box.height / cmp.h);
-        const s = (this.sliderMode === 'horizontal')
-            ? (base.w * bScale) / (cmp.w * cScale)
-            : (base.h * bScale) / (cmp.h * cScale);
+        // Rendered size of each, letterboxed into the shared box by object-fit.
+        const bFit = Math.min(box.width / base.w, box.height / base.h);
+        const cFit = Math.min(box.width / cmp.w,  box.height / cmp.h);
+        const s = Math.min((base.w * bFit) / (cmp.w * cFit),
+                           (base.h * bFit) / (cmp.h * cFit));
         return (Number.isFinite(s) && s > 0) ? s : 1;
     },
 
@@ -832,8 +885,10 @@ export const UIMixin = {
     // nothing changed, so it costs one rAF and is otherwise invisible.
     _scheduleCompareSync() {
         if (this._compareSyncRaf) return;
-        const view = (this.ownerDocument && this.ownerDocument.defaultView) ||
-                     (typeof window !== "undefined" ? window : null);
+        // The viewer's own window, not the host element's: while undocked those
+        // differ, and the ComfyUI tab's frames stop arriving once the popout is in
+        // front of it — which is exactly when the popout is being used.
+        const view = this._viewerWindow();
         if (!view || !view.requestAnimationFrame) { this._syncCompareLayout(); return; }
         this._compareSyncRaf = view.requestAnimationFrame(() => {
             this._compareSyncRaf = null;
