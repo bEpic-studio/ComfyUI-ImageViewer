@@ -203,6 +203,8 @@ export const UIMixin = {
         const win = this._viewerWindow();
         if (win && win.requestAnimationFrame) win.requestAnimationFrame(run);
         else if (win && win.setTimeout) win.setTimeout(run, 0);
+        // The ticker holds a frame callback from the window being left behind.
+        if (this.isComparing) this._startCompareTicker();
     },
 
     toggleUndock() {
@@ -694,6 +696,7 @@ export const UIMixin = {
             this.updateTransform();
             this.updateCompareVisuals();
             this._scheduleCompareSync();
+            this._startCompareTicker();
         } else {
             this.rotateBtn.style.display          = "none";
             this.imgCompare.style.display         = "none";
@@ -708,6 +711,7 @@ export const UIMixin = {
             if (this.sliderMode === 'contact') { this.sliderMode = 'vertical'; this.slider.className = 'slider-v'; }
             this.updateTransform();
             this.fitView();
+            this._stopCompareTicker();
         }
         this.updateTabHighlights();
     },
@@ -811,54 +815,98 @@ export const UIMixin = {
         return { w: this.imgBase.naturalWidth || 0, h: this.imgBase.naturalHeight || 0 };
     },
 
-    // Base and compare each get object-fit:contain against the same box, so media
-    // of a different resolution or aspect ratio render at different sizes. This
-    // returns the extra uniform scale that fits the compare frame INSIDE the
-    // base's rendered frame:
+    // Both layers get object-fit:contain against the same box, so each letterboxes
+    // itself independently and media of a different resolution or aspect ratio end
+    // up at different sizes. This returns the per-axis scale that stretches the
+    // compare frame onto the base's frame EXACTLY — same rectangle, aspect ratio
+    // deliberately broken when they differ.
     //
-    //   same aspect ratio      → the two frames land exactly on top of each other,
-    //                            whatever resolutions they were written at
-    //   different aspect ratio → the compare is contained by the base's frame, so
-    //                            it never spills outside the picture being wiped
-    //                            against, and both stay centred on the same point
+    // That is the point: every pixel of the wipe then has picture on both sides of
+    // the seam. Fitting the compare inside the base instead (the previous rule)
+    // keeps its shape but leaves bars where there is nothing to compare against,
+    // and a 480x832 clip against a 1920x1080 plate becomes a narrow band down the
+    // middle. Matching only the seam's own axis (the rule before that) lined up
+    // two edges and let the other run away entirely.
     //
-    // Deliberately the same in both wipe directions. Matching only the axis the
-    // seam travels across lines up two edges but lets the other axis run away: a
-    // 480x832 clip wiped against a 1920x1080 plate came out three times the
-    // plate's height in horizontal split, and 1.7x its width in vertical — so the
-    // seam crossed two pictures at visibly different sizes either way. It is
-    // exactly 1 when both already render at the same size, so same-resolution
-    // compares (the usual history-snapshot case) are unaffected.
-    //
-    // The RESULT does not depend on the window size: the compare always lands at
-    // a fixed multiple of the base's rendered frame, so the two grow and shrink
-    // together. It does have to be RE-DERIVED when the viewport box changes,
-    // though, because each layer letterboxes into that box independently — see
-    // _watchViewportResize.
-    _compareExtraScale() {
-        if (!this.isComparing || this.sliderMode === 'contact') return 1;
+    // Returns null when either size is not decoded yet — callers must treat that
+    // as "leave it alone", not as a scale of 1.
+    _compareFitScale() {
+        if (!this.isComparing || this.sliderMode === 'contact') return null;
         // Base decoded size (a video base hides imgBase, so read the <video>).
         const base = this._baseMediaSize();
         const cmp  = this._compareMediaSize();
-        if (!base.w || !base.h || !cmp.w || !cmp.h) return 1;
+        if (!base.w || !base.h || !cmp.w || !cmp.h) return null;
         const box = this.viewport.getBoundingClientRect();
-        if (!box.width || !box.height) return 1;
+        if (!box.width || !box.height) return null;
         // Rendered size of each, letterboxed into the shared box by object-fit.
         const bFit = Math.min(box.width / base.w, box.height / base.h);
         const cFit = Math.min(box.width / cmp.w,  box.height / cmp.h);
-        const s = Math.min((base.w * bFit) / (cmp.w * cFit),
-                           (base.h * bFit) / (cmp.h * cFit));
-        return (Number.isFinite(s) && s > 0) ? s : 1;
+        const x = (base.w * bFit) / (cmp.w * cFit);
+        const y = (base.h * bFit) / (cmp.h * cFit);
+        if (!Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || y <= 0) return null;
+        return { x, y };
     },
 
-    // Apply the shared zoom/pan to the compare layers, plus the aspect-match scale
-    // so the compare frame lines up with the base frame in wipe/split modes.
+    // Apply the shared zoom/pan to the compare layers, plus the per-axis stretch
+    // that puts the compare frame on the base's frame in wipe/split modes.
     _applyCompareTransform() {
         if (this.sliderMode === 'contact') return;   // contact positions via flex
-        const s  = this._compareExtraScale();
-        const tc = `translate(${this.panX}px, ${this.panY}px) scale(${this.zoom * s})`;
+        const f  = this._compareFitScale();
+        const sx = f ? f.x : 1, sy = f ? f.y : 1;
+        const tc = `translate(${this.panX}px, ${this.panY}px) scale(${this.zoom * sx}, ${this.zoom * sy})`;
         this.imgCompare.style.transform = tc;
         if (this.videoCompare) this.videoCompare.style.transform = tc;
+    },
+
+    // Everything the compare layout is derived from. Cheap to build: three reads
+    // of already-decoded sizes plus one rect.
+    _compareLayoutSig() {
+        const b = this._baseMediaSize(), c = this._compareMediaSize();
+        const r = this.viewport.getBoundingClientRect();
+        return [b.w, b.h, c.w, c.h, Math.round(r.width), Math.round(r.height),
+                this.zoom, this.panX, this.panY, this.sliderMode, this.sliderPos].join(',');
+    },
+
+    // While compare mode is on, the layout is kept honest by a frame ticker rather
+    // than by resize notifications alone.
+    //
+    // The layout depends on the viewport box, and the events that report that box
+    // changing have proved unreliable in the places this viewer runs: a
+    // ResizeObserver stops delivering once undocking moves its target into the
+    // popout's document, and the ComfyUI tab stops painting altogether once the
+    // popout covers it. The failure is not cosmetic — the compare and the base
+    // drift to different sizes as the window grows and the wipe stops lining up,
+    // which is exactly the bug this replaced.
+    //
+    // A tick is a signature comparison; styles are written only when something
+    // actually moved, so a compare that is sitting still costs one cheap callback
+    // per frame and nothing else. It stops as soon as compare mode is switched off.
+    _startCompareTicker() {
+        this._stopCompareTicker();
+        const win = this._viewerWindow();
+        if (!win || !win.requestAnimationFrame) return;
+        const tick = () => {
+            if (!this.isComparing) { this._compareTicker = null; return; }
+            try {
+                const sig = this._compareLayoutSig();
+                if (sig !== this._compareLayoutLastSig) {
+                    this._compareLayoutLastSig = sig;
+                    this._syncCompareLayout();
+                    this.updateImageFrame && this.updateImageFrame();
+                }
+            } catch (e) { /* never let a bad frame kill the loop */ }
+            this._compareTicker = win.requestAnimationFrame(tick);
+        };
+        this._compareLayoutLastSig = null;
+        this._compareTicker = win.requestAnimationFrame(tick);
+    },
+
+    _stopCompareTicker() {
+        if (!this._compareTicker) return;
+        const win = this._viewerWindow();
+        try { win && win.cancelAnimationFrame && win.cancelAnimationFrame(this._compareTicker); } catch (e) {}
+        this._compareTicker = null;
+        this._compareLayoutLastSig = null;
     },
 
     // Re-derive everything about the compare layer that depends on the two media

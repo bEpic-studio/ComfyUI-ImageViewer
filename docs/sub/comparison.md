@@ -43,14 +43,14 @@ The **Rotate** button in the toolbar cycles through three modes:
 
 ### Sources of Different Resolution
 
-You can compare media that don't share a resolution or aspect ratio — a 1080p render against a 720p one, an image sequence against a video, or a portrait clip against a landscape one. The second source is scaled to sit inside the first one's frame:
+You can compare media that don't share a resolution or aspect ratio — a 1080p render against a 720p one, an image sequence against a video, or a portrait clip against a landscape one. **The second source is scaled to cover the first one's frame exactly**: the two always occupy the identical rectangle on screen, so the divider has picture on both sides of it everywhere it goes.
 
 - **Same aspect ratio** — the two land exactly on top of each other, whatever resolutions they were written at. A 1024×1024 preview and its 2048×2048 upscale wipe against each other pixel for pixel.
-- **Different aspect ratio** — the second source is fitted inside the first one's frame and centred on it, so it never spills outside the picture you are wiping against. A 480×832 clip compared to a 1920×1080 plate fills the plate's height and occupies a band down the middle of it.
+- **Different aspect ratio** — the second source is stretched to the first one's rectangle, so its aspect ratio is deliberately not preserved. A 480×832 clip compared to a 1920×1080 plate is pulled out to the full width of the plate. That is the trade: a distorted second image, in exchange for a wipe that covers the whole frame instead of a narrow band down the middle of it.
 
-Both wipe directions scale the same way, so cycling between **Vertical Split** and **Horizontal Split** doesn't resize anything. Sources that already render at the same size are left untouched. **Contact Sheet** doesn't scale this way at all — it scales both to a shared height and lays them out side by side.
+Both wipe directions scale the same way, so cycling between **Vertical Split** and **Horizontal Split** doesn't resize anything. **Contact Sheet** doesn't scale this way at all — it scales both to a shared height, undistorted, and lays them out side by side.
 
-Resizing the viewer — dragging a panel, or resizing and maximising the undocked window — scales both sources together; their sizes relative to each other never change.
+Resizing the viewer — dragging the panel, or resizing and maximising the undocked window — keeps the two locked to the same rectangle at every size.
 
 The match is re-derived whenever either side's size becomes known or changes — a clip whose dimensions arrive late, a second source swapped in with <kbd>Shift</kbd>+click, a resized panel. It applies the same way to two tabs and to two pinned history snapshots; snapshots of the same tab usually share a resolution, so there is nothing to correct there.
 
