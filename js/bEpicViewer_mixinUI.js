@@ -689,6 +689,13 @@ export const UIMixin = {
             Object.assign(this.slider.style, { top: '0', bottom: '0', left: '', right: '', width: '2px', height: 'auto', display: 'block' });
             this.viewport.classList.remove('contact-mode');
             if (this.contactContainer) { this.contactContainer.style.transform = ''; this.contactContainer.style.width = ''; this.contactContainer.style.height = ''; }
+            // The container's own size was already being cleared here; the LAYERS
+            // were not. Contact Sheet sizes them in px, and any exit from compare
+            // that doesn't run through the branch below leaves that sizing on
+            // them. Coming back into a wipe with one layer pinned to a fixed size
+            // and the other filling the viewport is what made the two frames
+            // scale differently as the panel grew.
+            this.resetContactImageSizing();
             this.setFrame(this.currentFrame);
             // The compare layer carries the shared zoom/pan plus its aspect-match
             // scale. Without this it keeps whatever transform it had when compare
@@ -830,30 +837,52 @@ export const UIMixin = {
     //
     // Returns null when either size is not decoded yet — callers must treat that
     // as "leave it alone", not as a scale of 1.
+    //
+    // Each layer is measured against ITS OWN layout box rather than against the
+    // viewport. The two are normally the same box — both layers are 100% x 100%
+    // of the same container — but "normally" is not "always": leftover inline
+    // px sizing from Contact Sheet leaves one layer at a fixed size while the
+    // other still fills the viewport. Measured in the field: a 1280x720 base
+    // pinned to a 1280x720 box against a 1920x1080 compare filling a 1482x942
+    // viewport. Both clips being 16:9, a viewport-based calculation returns
+    // "no correction needed" and the two render 200px apart in width.
     _compareFitScale() {
         if (!this.isComparing || this.sliderMode === 'contact') return null;
         // Base decoded size (a video base hides imgBase, so read the <video>).
         const base = this._baseMediaSize();
         const cmp  = this._compareMediaSize();
         if (!base.w || !base.h || !cmp.w || !cmp.h) return null;
-        const box = this.viewport.getBoundingClientRect();
-        if (!box.width || !box.height) return null;
-        // Rendered size of each, letterboxed into the shared box by object-fit.
-        const bFit = Math.min(box.width / base.w, box.height / base.h);
-        const cFit = Math.min(box.width / cmp.w,  box.height / cmp.h);
+        const bBox = this._layerBox(this._activeBaseEl());
+        const cBox = this._layerBox(this._activeCompareEl());
+        if (!bBox || !cBox) return null;
+        // Rendered size of each, letterboxed into its own box by object-fit.
+        const bFit = Math.min(bBox.w / base.w, bBox.h / base.h);
+        const cFit = Math.min(cBox.w / cmp.w,  cBox.h / cmp.h);
         const x = (base.w * bFit) / (cmp.w * cFit);
         const y = (base.h * bFit) / (cmp.h * cFit);
         if (!Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || y <= 0) return null;
         return { x, y };
     },
 
+    // A layer's untransformed layout box, or null if it has none to speak of.
+    _layerBox(el) {
+        if (!el) return null;
+        const w = el.offsetWidth, h = el.offsetHeight;
+        return (w > 0 && h > 0) ? { w, h } : null;
+    },
+
     // Apply the shared zoom/pan to the compare layers, plus the per-axis stretch
     // that puts the compare frame on the base's frame in wipe/split modes.
     _applyCompareTransform() {
         if (this.sliderMode === 'contact') return;   // contact positions via flex
-        const f  = this._compareFitScale();
-        const sx = f ? f.x : 1, sy = f ? f.y : 1;
-        const tc = `translate(${this.panX}px, ${this.panY}px) scale(${this.zoom * sx}, ${this.zoom * sy})`;
+        const f = this._compareFitScale();
+        // A clip whose metadata has momentarily gone (a re-source, a RAM purge)
+        // reports 0x0 for a few frames. Falling back to 1 there would throw away
+        // a correct correction and snap the compare to the wrong size, so the
+        // last good one is held until a real measurement replaces it.
+        if (f) this._lastCompareFit = f;
+        const fit = f || this._lastCompareFit || { x: 1, y: 1 };
+        const tc = `translate(${this.panX}px, ${this.panY}px) scale(${this.zoom * fit.x}, ${this.zoom * fit.y})`;
         this.imgCompare.style.transform = tc;
         if (this.videoCompare) this.videoCompare.style.transform = tc;
     },
@@ -863,7 +892,10 @@ export const UIMixin = {
     _compareLayoutSig() {
         const b = this._baseMediaSize(), c = this._compareMediaSize();
         const r = this.viewport.getBoundingClientRect();
+        const bb = this._layerBox(this._activeBaseEl()) || { w: 0, h: 0 };
+        const cb = this._layerBox(this._activeCompareEl()) || { w: 0, h: 0 };
         return [b.w, b.h, c.w, c.h, Math.round(r.width), Math.round(r.height),
+                bb.w, bb.h, cb.w, cb.h,
                 this.zoom, this.panX, this.panY, this.sliderMode, this.sliderPos].join(',');
     },
 
@@ -920,9 +952,26 @@ export const UIMixin = {
     // changed size, the zoom didn't.
     _syncCompareLayout() {
         if (!this.isComparing) return;
-        if (this.sliderMode === 'contact') this.resizeContactContainer();
+        if (this.sliderMode === 'contact') {
+            this.resizeContactContainer();
+        } else if (this._hasInlineLayerSizing()) {
+            // Contact Sheet sizes the layers in px; a wipe mode wants them back at
+            // 100% x 100% of the container. Re-asserted here rather than only on
+            // the way out of contact, because a layer left at a fixed size is
+            // invisible until you compare against it and the two frames come out
+            // at different sizes.
+            this.resetContactImageSizing();
+        }
         this._applyCompareTransform();
         this.updateCompareVisuals();
+    },
+
+    // Is any layer still carrying inline px sizing (only Contact Sheet sets it)?
+    _hasInlineLayerSizing() {
+        for (const el of [this.imgBase, this.imgCompare, this.videoBase, this.videoCompare]) {
+            if (el && (el.style.width || el.style.height)) return true;
+        }
+        return false;
     },
 
     // Same thing, once more after the browser has laid the frame out. Entering
