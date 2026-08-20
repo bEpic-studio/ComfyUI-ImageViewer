@@ -780,77 +780,12 @@ export const HistoryMixin = {
             : null;
     },
 
-    // ── Open Folder ──────────────────────────────────────────────────────────
-
-    async openFolderPicker() {
-        console.debug('bEpicViewer.openFolderPicker invoked');
-        try {
-            this.openFolderBtn.disabled = true;
-            this.openFolderBtn.title    = 'Opening folder picker…';
-            const res  = await fetch(api.apiURL('/bepic/pick_folder'));
-            const data = await res.json();
-            if (!data.folder || !data.files || data.files.length === 0) {
-                if (data.error && data.error !== 'No folder selected') {
-                    alert(`bEpicViewer – Open Folder error:\n${data.error}`);
-                }
-                return;
-            }
-            this.loadFolderImages(data.folder, data.files);
-        } catch (e) {
-            console.error('bEpicViewer openFolderPicker error:', e);
-            alert(`bEpicViewer – Could not open folder picker.\n${e.message || e}`);
-        } finally {
-            this.openFolderBtn.disabled = false;
-            this.openFolderBtn.title    = 'Open all images in folder';
-        }
-    },
-
-    loadFolderImages(folder, files) {
-        const folderName = folder.replace(/\\/g, '/').split('/').pop() || folder;
-        const tabKey     = `folder_${Date.now()}`;
-
-        this.allTabs[tabKey]   = [];
-        this.tabLabels[tabKey] = `📂 ${folderName}`;
-        this.history[tabKey]   = files.map(f => [{ path: f.path, name: f.name, external: true }]);
-
-        if (files.length > 0) {
-            this.allTabs[tabKey] = [{ path: files[0].path, name: files[0].name, external: true }];
-        }
-
-        if (!this.popoutWindow || this.popoutWindow.closed) this.style.display = 'flex';
-
-        this.refreshFolderTab(tabKey, folderName);
-        this.switchTab(tabKey);
-
-        const panel = this.historyPanel || this.shadowRoot.getElementById('history-panel');
-        if (panel) {
-            panel.style.display = 'flex';
-            this._historyPanelSig = null;
-            this.renderHistoryPanel();
-        }
-        this.queuePersistViewerState();
-    },
-
-    refreshFolderTab(tabKey, folderName) {
-        if (!this.tabsContainer) return;
-        const existing = this.tabsContainer.querySelector(`[data-tab="${tabKey}"]`);
-        if (existing) existing.remove();
-
-        const btn = this._makeTabButton(tabKey, `📂 ${folderName}`);
-        btn.onclick = (e) => {
-            if (e.shiftKey) { this.selectedNodeIds = [tabKey]; return; }
-            this.switchTab(tabKey);
-        };
-
-        const closeX = document.createElement('span');
-        closeX.className = 'tab-close';
-        closeX.title = 'Close this folder tab';
-        this._setIcon(closeX, 'icon-close');
-        closeX.onclick = (e) => { e.stopPropagation(); this.closeTab(tabKey); };
-        btn.appendChild(closeX);
-
-        this.tabsContainer.appendChild(btn);
-    },
+    // ── Opening files off disk ─────────────────────────────────────
+    // Lives in bEpicViewer_mixinBrowser.js now. What stood here raised a
+    // tkinter folder dialog on the SERVER, so it appeared on whatever machine
+    // ComfyUI runs on — invisible over a remote session — blocked the event
+    // loop while it was up, and could only ever return a whole folder of
+    // stills. The browser panel lists directories over the API instead.
 
     // ── Tab helpers ──────────────────────────────────────────────────────────
 

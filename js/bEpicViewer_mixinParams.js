@@ -70,6 +70,8 @@ export const ParamsMixin = {
             parent.appendChild(this.paramsPanel);
             if (this.historyPanel) { this.historyPanel.classList.remove('right'); this.historyPanel.classList.add('left'); }
         }
+        // The file browser docks against the params panel, so it follows it over.
+        if (this._dockBrowserPanel) this._dockBrowserPanel();
     },
 
     setupParamsResizing() {

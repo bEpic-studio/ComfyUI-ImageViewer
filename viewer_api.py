@@ -74,6 +74,90 @@ def _resolve_raw_path(path):
                 return cand, True
     return cand, False
 
+# One directory listing is meant to be read, not scrolled forever; a frame
+# request costs a probe per video, so it is capped harder.
+_BROWSE_FILE_CAP = 3000
+_BROWSE_FRAME_CAP = 500
+
+
+def _browse_exts():
+    """(images, videos) the browser will list, from the resolver when present."""
+    if media_resolve is not None:
+        return media_resolve.IMAGE_EXTS, media_resolve.VIDEO_EXTS
+    return ({".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif", ".ico",
+             ".svg", ".tif", ".tiff", ".exr", ".dpx", ".tga", ".hdr"},
+            {".mp4", ".m4v", ".mov", ".webm", ".mkv", ".ogv", ".avi", ".mpg",
+             ".mpeg", ".wmv", ".flv"})
+
+
+def _browse_sort_key(name):
+    """frame_2.png before frame_10.png, as everywhere else in the viewer."""
+    if media_resolve is not None:
+        try:
+            return media_resolve._natural_key(name)
+        except Exception:
+            pass
+    return [int(tok) if tok.isdigit() else tok.lower()
+            for tok in re.split(r"(\d+)", name)]
+
+
+def _browse_default_dir():
+    """Where the browser opens: ComfyUI's input directory."""
+    try:
+        d = folder_paths.get_input_directory()
+        if d and os.path.isdir(d):
+            return d
+    except Exception:
+        pass
+    return os.path.abspath(os.getcwd())
+
+
+def _browse_parent(path):
+    """The directory above `path`, or None at a filesystem root."""
+    parent = os.path.dirname(os.path.abspath(path))
+    return parent if parent and parent != path else None
+
+
+def _browse_roots():
+    """Shortcut destinations for the browser's jump menu."""
+    roots, seen = [], set()
+
+    def add(label, path):
+        if not path:
+            return
+        p = os.path.abspath(path)
+        key = os.path.normcase(p)
+        if key in seen or not os.path.isdir(p):
+            return
+        seen.add(key)
+        roots.append({"label": label, "path": p})
+
+    for label, get in (("Input", getattr(folder_paths, "get_input_directory", None)),
+                       ("Output", getattr(folder_paths, "get_output_directory", None)),
+                       ("Temp", getattr(folder_paths, "get_temp_directory", None))):
+        try:
+            if get:
+                add(label, get())
+        except Exception:
+            pass
+    try:
+        add("Home", os.path.expanduser("~"))
+    except Exception:
+        pass
+
+    if os.name == "nt":
+        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            drive = f"{letter}:\\"
+            try:
+                if os.path.isdir(drive):
+                    add(drive, drive)
+            except Exception:
+                continue
+    else:
+        add("/", "/")
+    return roots
+
+
 try:
     from aiohttp import web
 
@@ -202,40 +286,117 @@ try:
 
             return web.json_response({"unreachable": unreachable})
 
-        async def _bepic_pick_folder(request):
-            """Open a server-side folder picker dialog and return a sorted list of image files."""
-            folder = None
-            error = None
+        async def _bepic_browse(request):
+            """List one directory for the viewer's file browser panel.
+
+            No path → ComfyUI's input directory, which is where the browser opens.
+
+            Only directories and media files are reported. That is not a security
+            boundary — /bepic/view_file already serves any absolute path the user
+            names, and the folder picker this replaced could reach anywhere too —
+            it just keeps the panel to what the viewer can actually show.
+            """
+            raw = (request.query.get("path") or "").strip()
+            if not raw:
+                raw = _browse_default_dir()
+            path = os.path.abspath(os.path.expanduser(raw))
+
+            if not os.path.isdir(path):
+                return web.json_response({
+                    "path": path, "parent": None, "roots": _browse_roots(),
+                    "dirs": [], "files": [], "truncated": False,
+                    "error": "not a directory",
+                }, status=404)
+
+            image_exts, video_exts = _browse_exts()
+            dirs, files, truncated = [], [], False
             try:
-                import tkinter as tk
-                from tkinter import filedialog
-                root = tk.Tk()
-                root.withdraw()
+                names = os.listdir(path)
+            except Exception as e:
+                return web.json_response({
+                    "path": path, "parent": _browse_parent(path), "roots": _browse_roots(),
+                    "dirs": [], "files": [], "truncated": False, "error": str(e),
+                }, status=403)
+
+            for name in sorted(names, key=_browse_sort_key):
+                full = os.path.join(path, name)
                 try:
-                    root.wm_attributes('-topmost', 1)
-                except Exception:
-                    pass
-                folder = filedialog.askdirectory(title="Select Folder to Open in Viewer")
-                root.destroy()
-            except Exception as e:
-                error = str(e)
+                    is_dir = os.path.isdir(full)
+                except OSError:
+                    continue                      # a dead junction / permission wall
+                if is_dir:
+                    dirs.append({"name": name, "path": full})
+                    continue
+                ext = os.path.splitext(name)[1].lower()
+                if ext in image_exts:
+                    kind = "image"
+                elif ext in video_exts:
+                    kind = "video"
+                else:
+                    continue
+                if len(files) >= _BROWSE_FILE_CAP:
+                    truncated = True
+                    continue
+                try:
+                    st = os.stat(full)
+                    size, mtime = st.st_size, st.st_mtime
+                except OSError:
+                    size, mtime = 0, 0
+                files.append({"name": name, "path": full, "kind": kind,
+                              "ext": ext, "size": size, "mtime": mtime})
 
-            if not folder:
-                return web.json_response({"folder": None, "files": [], "error": error or "No folder selected"})
+            return web.json_response({
+                "path": path,
+                "parent": _browse_parent(path),
+                "roots": _browse_roots(),
+                "dirs": dirs,
+                "files": files,
+                "truncated": truncated,
+            })
 
-            image_extensions = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif', '.avif'}
-            files = []
+        async def _bepic_browse_frames(request):
+            """Turn browsed paths into viewer frames.
+
+            Body: {"paths": [abs path, ...]}. Answers with one frame dict per
+            readable file — the same shape the resolver hands the viewer for a
+            loader node, so a video arrives with its fps, frame count and a
+            cached poster instead of the viewer having to guess at them.
+
+            Kept apart from the listing above because this is the expensive half:
+            every video costs a probe and a poster decode, and a folder of them
+            would stall the panel that is only trying to draw a list of names.
+            """
+            if media_resolve is None:
+                return web.json_response(
+                    {"error": "media resolver unavailable on this install"}, status=500)
             try:
-                for fname in sorted(os.listdir(folder)):
-                    ext = os.path.splitext(fname)[1].lower()
-                    if ext in image_extensions:
-                        full_path = os.path.join(folder, fname)
-                        if os.path.isfile(full_path):
-                            files.append({"path": full_path, "name": fname})
-            except Exception as e:
-                return web.json_response({"folder": folder, "files": [], "error": str(e)})
+                data = await request.json()
+            except Exception:
+                data = {}
+            paths = data.get("paths") if isinstance(data, dict) else None
+            if not isinstance(paths, list):
+                paths = []
 
-            return web.json_response({"folder": folder, "files": files})
+            image_exts, video_exts = _browse_exts()
+            frames, missing = [], []
+            for raw in paths[:_BROWSE_FRAME_CAP]:
+                if not raw or not isinstance(raw, str):
+                    continue
+                p = os.path.abspath(raw)
+                if not os.path.isfile(p):
+                    missing.append(raw)
+                    continue
+                ext = os.path.splitext(p)[1].lower()
+                try:
+                    if ext in video_exts:
+                        frames.append(media_resolve._video_frame(p))
+                    elif ext in image_exts:
+                        frames.append(media_resolve._image_frame(p))
+                except Exception as e:
+                    print(f"[bEpicViewer] browse_frames failed for {p}: {e}")
+                    missing.append(raw)
+
+            return web.json_response({"frames": frames, "missing": missing})
 
         async def _bepic_view_file(request):
             """Serve any absolute file path selected by the user (no directory restriction)."""
@@ -487,8 +648,10 @@ try:
         _safe_add("POST", "/api/bepic/probe_paths", _bepic_probe_paths)
         _safe_add("GET", "/bepic/clear_cache", _bepic_clear_cache)
         _safe_add("GET", "/api/bepic/clear_cache", _bepic_clear_cache)
-        _safe_add("GET", "/bepic/pick_folder", _bepic_pick_folder)
-        _safe_add("GET", "/api/bepic/pick_folder", _bepic_pick_folder)
+        _safe_add("GET", "/bepic/browse", _bepic_browse)
+        _safe_add("GET", "/api/bepic/browse", _bepic_browse)
+        _safe_add("POST", "/bepic/browse_frames", _bepic_browse_frames)
+        _safe_add("POST", "/api/bepic/browse_frames", _bepic_browse_frames)
         _safe_add("GET", "/bepic/view_file", _bepic_view_file)
         _safe_add("GET", "/api/bepic/view_file", _bepic_view_file)
         _safe_add("POST", "/bepic/save_annotation", _bepic_save_annotation)

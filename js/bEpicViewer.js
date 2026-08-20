@@ -14,6 +14,7 @@ import { ToolsMixin }    from "./bEpicViewer_tools.js";
 import { RotoMixin }     from "./bEpicViewer_roto.js";
 import { AnnotateMixin } from "./bEpicViewer_annotate.js";
 import { DnDMixin }      from "./bEpicViewer_mixinDnD.js";
+import { BrowserMixin }  from "./bEpicViewer_mixinBrowser.js";
 import { SendFromNodeMixin, registerSendToViewerMenu, sendSelectionToViewer } from "./bEpicViewer_sendFromNode.js";
 import {
     registerSendNode, registerToolNode, senderTabInfo, isViewerSourceNode,
@@ -117,7 +118,7 @@ const ICON_MAP = {
     'params-btn':        'icon-params',
     'range-btn':         'icon-range',
     'refresh':           'icon-refresh',
-    'open-folder-btn':   'icon-folder',
+    'browser-toggle-btn':'icon-folder',
     'clear-cache-btn':   'icon-delete',
     'history-clear-btn': 'icon-delete',
     'help-btn':          'icon-help',
@@ -260,6 +261,7 @@ class ViewerPanel extends HTMLElement {
                 tabColors: pick(this.tabColors),
                 tabOrder: (Array.isArray(this.tabOrder) ? this.tabOrder : []).filter(keepKey),
                 activeTab,
+                browserDir: this._browserDir || null,
                 savedAt: Date.now(),
             };
             window.localStorage.setItem(this._getViewerStateStorageKey(), JSON.stringify(payload));
@@ -375,6 +377,10 @@ class ViewerPanel extends HTMLElement {
         this._initParamsPanel();
         this._initHistoryPanel();
         this._initToolbarButtons();
+        // Guarded: the browser panel is a side feature, and nothing about it is
+        // worth taking the whole viewer down for if a future edit throws here.
+        try { this._initFileBrowser(); }   // needs the toolbar button it toggles from
+        catch (e) { console.warn('bEpicViewer: file browser failed to start', e); }
         this._applyIconSkin();          // inject inline SVGs from the JSON skin
 
         await this.loadFactoryDefault();
@@ -656,15 +662,14 @@ class ViewerPanel extends HTMLElement {
         if (sEndBtn && sEndBtn.parentNode) sEndBtn.parentNode.insertBefore(this.rangeBtn, sEndBtn.nextSibling);
         else if (this.refreshBtn) this.refreshBtn.parentNode.insertBefore(this.rangeBtn, this.refreshBtn);
 
-        this.openFolderBtn              = document.createElement('button');
-        this.openFolderBtn.id           = 'open-folder-btn';
-        this.openFolderBtn.className    = 'sprite-icon';
-        this.openFolderBtn.title        = 'Open all images in folder';
-        this.openFolderBtn.onclick      = () => this.openFolderPicker();
+        this.browserToggleBtn           = document.createElement('button');
+        this.browserToggleBtn.id        = 'browser-toggle-btn';
+        this.browserToggleBtn.className = 'sprite-icon';
+        this.browserToggleBtn.title     = 'Toggle File Browser';
         const clearCacheBtn = sr.getElementById('clear-cache-btn');
-        if (clearCacheBtn && clearCacheBtn.parentNode) clearCacheBtn.parentNode.insertBefore(this.openFolderBtn, clearCacheBtn);
+        if (clearCacheBtn && clearCacheBtn.parentNode) clearCacheBtn.parentNode.insertBefore(this.browserToggleBtn, clearCacheBtn);
         else if (this.historyToggleBtn && this.historyToggleBtn.parentNode) {
-            this.historyToggleBtn.parentNode.insertBefore(this.openFolderBtn, this.historyToggleBtn.nextSibling);
+            this.historyToggleBtn.parentNode.insertBefore(this.browserToggleBtn, this.historyToggleBtn.nextSibling);
         }
 
         // layout-sel doesn't exist in HTML — create it as an invisible overlay
@@ -948,7 +953,7 @@ class ViewerPanel extends HTMLElement {
     }
 
     // Build the tab-bar DOM from this.tabOrder.
-    // Called by updateData, refreshTabs, and loadFolderImages.
+    // Called by updateData, refreshTabs, and whatever opens files off disk.
     _rebuildTabBar(node) {
         const container = this.tabsContainer || this.tabBar;
         if (!container) return;
@@ -957,12 +962,6 @@ class ViewerPanel extends HTMLElement {
         const frag = document.createDocumentFragment();
 
         this.tabOrder.forEach(k => {
-            if (k.startsWith('folder_')) {
-                const folderName = (this.tabLabels[k] || k).replace(/^\s*/, '');
-                this.refreshFolderTab(k, folderName);
-                return;
-            }
-
             const btn = this._makeTabButton(k, this._resolveTabLabel(k, node));
             btn.classList.toggle('active', this.activeTab === k);
 
@@ -1059,6 +1058,7 @@ Object.assign(
     RotoMixin,
     AnnotateMixin,
     DnDMixin,
+    BrowserMixin,
     SendFromNodeMixin,
 );
 

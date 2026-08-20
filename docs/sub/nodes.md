@@ -63,7 +63,8 @@ The extension registers the following HTTP routes on the ComfyUI server. These a
 | GET / POST | `/bepic/open_path` | Open a folder path in the OS file explorer |
 | GET | `/bepic/raw_view?path=…` | Serve a bEpic temp PNG securely |
 | GET | `/bepic/view_file?path=…` | Serve an external image file |
-| GET | `/bepic/pick_folder` | Open a native folder picker dialog |
+| GET | `/bepic/browse?path=…` | List one directory's sub-folders and media files (no path → ComfyUI's input folder) |
+| POST | `/bepic/browse_frames` | Turn browsed paths into viewer frames — fps, frame count and poster for videos |
 | GET | `/bepic/clear_cache` | Delete all `bEpic_*` temp files |
 | POST | `/bepic/extract_frame` | Write one frame of a clip out as a PNG beside it, and report where it landed |
 | GET | `/bepic/viewer` | Standalone viewer-only HTML page |

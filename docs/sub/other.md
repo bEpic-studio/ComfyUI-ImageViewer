@@ -6,11 +6,34 @@
 
 ## File Browser
 
-You can load any folder of images from your computer into the viewer — no ComfyUI workflow needed.
-1. Click the **Open Folder** button in the playback toolbar (folder icon), select the folder you want to import.
-2. The viewer scans the folder for supported image types: `jpg`, `jpeg`, `png`, `webp`, `gif`, `bmp`, `tiff`, `avif`.
-3. A new tab labelled `folder_<name>` is created containing all found images as a sequence.
-4. Use the timeline and playback controls to browse the sequence.
+A panel inside the viewer that browses the disk, previews what it finds, and hands files to the viewer or to the graph — no ComfyUI workflow needed. Click the **folder icon** in the playback toolbar to show or hide it.
+
+It opens on **ComfyUI's input folder**, which the server reports, so it is the right folder even when ComfyUI runs on another machine.
+
+### The panel
+
+| Part | What it does |
+|---|---|
+| **↑** | Up one folder. <kbd>Backspace</kbd> does the same while the list has focus. |
+| **Go to…** | Jump to Input, Output, Temp, your home folder, or any drive. |
+| **⟳** | Re-read the folder — pick up files written since you last looked. |
+| **Path field** | Shows where you are; type or paste a path and press <kbd>Enter</kbd> to go there. |
+| **List** | Sub-folders and media files, ordered so `frame_2` comes before `frame_10`. Sizes on the right. <kbd>↑</kbd> <kbd>↓</kbd> walk it. |
+| **Preview** | The selected file, at whatever size the pane is. Drag the bar above it to make it taller. |
+| **Open in Viewer** | Opens the selection — or the whole folder when nothing is selected. |
+
+Everything the viewer can display is listed, `exr`, `dpx`, `tiff` and `hdr` included; those are converted to a PNG proxy on the way to the preview, exactly as they are in the main viewport. Videos preview in place with their own transport. A container the browser has no decoder for (`mkv`, `avi`, `wmv`) says so and shows a poster frame instead — it still opens and drags like anything else.
+
+### Getting files out of it
+
+- **Double-click** a file to open it in the viewer, or a folder to go into it.
+- **Drag a row onto the viewport** to open it there.
+- **Drag a row onto the ComfyUI graph** to get a loader node pointing at the original file — the same drag the history strip offers. See [Dragging a snapshot onto the graph](tabs-history.md).
+- **Select several** — <kbd>Ctrl</kbd>+click to add one, <kbd>Shift</kbd>+click for a range — and drag or open the lot in one go. Dragging a row that is part of the selection takes the whole selection; dragging any other row takes just that one.
+
+### How they arrive
+
+Images open as **one tab holding the whole sequence**, so the timeline scrubs the folder. Each video gets a tab of its own, since a video tab holds one clip, and arrives with its real frame rate and frame count rather than a guess. Tabs opened this way are ordinary tabs: <kbd>Shift</kbd>+click one to compare it against another, and they survive a reload.
 
 ### Path Bar Overlay
 

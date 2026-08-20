@@ -4,6 +4,9 @@
 //      open them in a new tab. Files are shown straight from blob: URLs (no
 //      upload, no on-disk path needed), so these tabs are ephemeral — they are
 //      excluded from persisted state and their object URLs are revoked on close.
+//      The viewport also takes the viewer's own drag payload, so a row of the
+//      file browser (or a history thumbnail) dropped on the picture opens there
+//      — those name real files on disk and make ordinary, persisted tabs.
 //   2. History → ComfyUI graph:  drag a history thumbnail onto the node graph to
 //      create a path-based loader that references the ORIGINAL file on disk (no
 //      upload / no duplicate copy):
@@ -50,14 +53,15 @@ export const DnDMixin = {
             try { return Array.from(e.dataTransfer?.types || []).includes("Files"); }
             catch (_) { return false; }
         };
+        const wanted = (e) => hasFiles(e) || this._dragHasHistoryPayload(e);
         const hint = (on) => { try { vp.classList.toggle("bepic-drop-hover", on); } catch (_) {} };
 
         vp.addEventListener("dragenter", (e) => {
-            if (!hasFiles(e)) return;
+            if (!wanted(e)) return;
             e.preventDefault(); e.stopPropagation(); hint(true);
         });
         vp.addEventListener("dragover", (e) => {
-            if (!hasFiles(e)) return;
+            if (!wanted(e)) return;
             e.preventDefault(); e.stopPropagation();
             try { e.dataTransfer.dropEffect = "copy"; } catch (_) {}
             hint(true);
@@ -68,11 +72,69 @@ export const DnDMixin = {
             if (!e.relatedTarget || !vp.contains(e.relatedTarget)) hint(false);
         });
         vp.addEventListener("drop", (e) => {
-            if (!hasFiles(e)) return;
+            if (!wanted(e)) return;
             e.preventDefault(); e.stopPropagation(); hint(false);
-            const files = Array.from(e.dataTransfer.files || []);
-            if (files.length) this._addDroppedFiles(files);
+
+            if (hasFiles(e)) {
+                const files = Array.from(e.dataTransfer.files || []);
+                if (files.length) this._addDroppedFiles(files);
+                return;
+            }
+            let payload = null;
+            try { payload = JSON.parse(e.dataTransfer.getData("application/x-bepic-history")); } catch (_) {}
+            if (!payload) return;
+            this._openDragItemsInViewer(Array.isArray(payload.items) ? payload.items : [payload]);
         });
+    },
+
+    /** Open a dropped bEpic payload (file-browser rows, history thumbnails).
+     *
+     * Anything naming a file on disk is re-read through /bepic/browse_frames so
+     * a clip arrives with its fps, frame count and poster rather than the
+     * viewer inferring them from the extension. Blob-backed items came from an
+     * Explorer drop and already carry everything they will ever have.
+     */
+    async _openDragItemsInViewer(items) {
+        if (!Array.isArray(items) || items.length === 0) return;
+
+        const frames = [];
+        const paths  = [];
+        const slots  = [];
+
+        for (const it of items) {
+            if (!it) continue;
+            if (it.path) { slots.push(frames.length); frames.push(null); paths.push(it.path); continue; }
+            if (it.url) {
+                const f = { url: it.url, name: it.filename || "file",
+                            filename: it.filename || null, external: true, dropped: true };
+                if (it.kind === "video") { f.kind = "video"; f.fps = this.fps || 24; }
+                frames.push(f);
+                continue;
+            }
+            if (it.filename) {
+                frames.push({ filename: it.filename, name: it.filename,
+                              subfolder: it.subfolder || "", type: it.type || "output" });
+            }
+        }
+
+        if (paths.length > 0) {
+            const resolved = await this._browserFramesFor(paths);
+            slots.forEach((slot, i) => {
+                frames[slot] = resolved[i] || {
+                    path: paths[i], external: true,
+                    name: String(paths[i]).split(/[\\/]/).pop() || "file",
+                };
+            });
+        }
+
+        const usable = frames.filter(Boolean);
+        if (usable.length === 0) return;
+
+        const first = paths[0] || "";
+        const label = first
+            ? (this._dirname(first).split(/[\\/]/).pop() || "files")
+            : (usable.length === 1 ? (usable[0].name || "file") : "files");
+        this.openExternalFramesInViewer(usable, label);
     },
 
     _frameForDroppedFile(file, isVideo) {

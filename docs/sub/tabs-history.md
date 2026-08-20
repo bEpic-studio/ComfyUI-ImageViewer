@@ -11,7 +11,7 @@
 Every image source gets its own tab. Tabs are created automatically when:
 
 - A **bEpic Send To Image Viewer** node runs — the tab name is set by the node's `tab_name` field (defaults to the node's unique ID if left blank).
-- You **Open a Folder** via the file-browser button — a `folder_*` tab is created for the images in that directory.
+- You open files from the **File Browser** panel, or drag them onto the viewport from it — a `folder_*` tab is created, holding a folder's images as one sequence and each video on its own. See [File Browser](other.md#file-browser).
 - You right-click a node on the canvas and choose **Send to Image Viewer** — a loader opens its file directly, any other image-producing node runs its branch first. See [Send to Image Viewer](other.md#send-to-image-viewer).
 
 

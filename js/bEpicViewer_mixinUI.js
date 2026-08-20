@@ -57,6 +57,9 @@ export const UIMixin = {
         const target   = e.composedPath()[0];
         const isTyping = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
         if (isTyping) return;
+        // The file browser's list is a focusable widget: while it has the focus
+        // its arrows walk the listing, so the viewer must not also step frames.
+        if (target.closest && target.closest('.browser-list')) return;
 
         if (e.key === 'e' || e.key === 'E') {
             this.isExposureModifierActive = true;

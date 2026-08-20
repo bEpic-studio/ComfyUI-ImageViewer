@@ -14,7 +14,7 @@
 
 ### Tab Bar
 
-The topmost strip holds the tabs. The **active tab** is highlighted orange. Tabs appear automatically when a bEpicSendToViewer node runs or when you open a folder via the file browser. Change the name of the tabs by changing the `tab_name` in the **bEpic Send To Image Viewer** node.
+The topmost strip holds the tabs. The **active tab** is highlighted orange. Tabs appear automatically when a bEpicSendToViewer node runs or when you open files from the file browser panel. Change the name of the tabs by changing the `tab_name` in the **bEpic Send To Image Viewer** node.
 
 | Action | How |
 |---|---|
@@ -76,7 +76,7 @@ The bottom bar contains (left to right):
 | Timeline slider | Scrub to any frame; <kbd>Ctrl</kbd>+drag to set a sub-range |
 | FPS input | Set playback speed (default 25 fps) |
 | Loop mode | Loop / Ping-Pong / Once |
-| Toolbar icons | Shape toggle, Clear Cache, Open Folder, Layouts, Undock, Help |
+| Toolbar icons | Shape toggle, Clear Cache, File Browser, Layouts, Undock, Help |
 
 ## Resizing & Moving the Panel
 

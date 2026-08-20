@@ -51,6 +51,27 @@
             <div id="compare-slider" class="slider-v"></div>
             <button id="rotate-btn" class="sprite-icon" style="display:none;" title="Toggle Compare Modes"></button>
         </div>
+        <div id="browser-panel" class="browser-panel right">
+            <div class="panel-resizer" id="browser-resizer"></div>
+            <div class="browser-header">
+                <button id="browser-up-btn" class="browser-btn" title="Parent folder (Backspace)">&#8593;</button>
+                <select id="browser-root-sel" title="Jump to a folder"><option value="">Go to&#8230;</option></select>
+                <button id="browser-refresh-btn" class="browser-btn" title="Re-read this folder">&#10227;</button>
+            </div>
+            <input type="text" id="browser-path" class="browser-path" spellcheck="false"
+                   title="Type or paste a folder path, then press Enter">
+            <div id="browser-list" class="browser-list" tabindex="0"></div>
+            <div id="browser-split" class="browser-split" title="Resize the preview"></div>
+            <div id="browser-preview-stage" class="browser-preview-stage">
+                <img id="browser-preview-img" alt="">
+                <video id="browser-preview-vid" playsinline muted loop controls></video>
+                <div id="browser-preview-msg" class="browser-preview-msg"></div>
+            </div>
+            <div id="browser-preview-meta" class="browser-preview-meta"></div>
+            <div class="browser-actions">
+                <button id="browser-open-btn" class="browser-open">Open in Viewer</button>
+            </div>
+        </div>
         <div id="params-panel" class="params-panel right">
             <div class="panel-resizer" id="panel-resizer"></div>
             <div class="params-header">
@@ -71,6 +92,7 @@
         <div><b>Shift+Click History:</b> Compare two snapshots</div>
         <div><b>Ctrl-left drag on Timeline</b>  Select playback range</div>
         <div><b>Shift-drag off the Timeline</b>  Pull the frame on screen onto the graph as a Load Image node (a video frame is extracted to a PNG beside the clip)</div>
+        <div><b>Drag from the File Browser</b>  onto the viewport to open it here, or onto the graph for a loader node</div>
         <div id="help-roto" style="display:none; margin-top:14px; border-top:1px solid #333; padding-top:10px;">
             <h3 style="color:#f60;">Roto Tool</h3>
             <div><b>The matte lives on a node:</b> turning this on over any other tab adds a <i>bEpic Image Viewer Roto</i> node wired to the image you are looking at, and draws into that</div>

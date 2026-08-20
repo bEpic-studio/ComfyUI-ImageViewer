@@ -77,6 +77,13 @@ export const LayoutMixin = {
                     width: this.historyPanel.style.width || `${Math.round(this.historyPanel.getBoundingClientRect().width)}px`,
                 };
             }
+            if (this.browserPanel) {
+                layoutData.browser = {
+                    visible: this.isFileBrowserOpen(),
+                    width: this.browserPanel.style.width || `${Math.round(this.browserPanel.getBoundingClientRect().width)}px`,
+                    previewHeight: this._browserPreviewH || null,
+                };
+            }
         } catch (e) { console.warn('Could not read panel states', e); }
 
         this.customLayouts[name] = layoutData;
@@ -105,6 +112,7 @@ export const LayoutMixin = {
                 width: "50vw", height: "50vh",
                 params: { visible: true, width: "300px", side: "right" },
                 history: { visible: false, width: "80px" },
+                browser: { visible: false, width: "300px" },
             };
         }
     },
@@ -133,6 +141,13 @@ export const LayoutMixin = {
                 layoutData.history = {
                     visible: this.historyPanel.style.display !== "none" && hStyles.display !== "none",
                     width: this.historyPanel.style.width || `${Math.round(this.historyPanel.getBoundingClientRect().width)}px`,
+                };
+            }
+            if (this.browserPanel) {
+                layoutData.browser = {
+                    visible: this.isFileBrowserOpen(),
+                    width: this.browserPanel.style.width || `${Math.round(this.browserPanel.getBoundingClientRect().width)}px`,
+                    previewHeight: this._browserPreviewH || null,
                 };
             }
         } catch (e) { console.warn('Could not read panel states for factory default', e); }
@@ -342,6 +357,18 @@ export const LayoutMixin = {
                         this.renderHistoryPanel();
                     }
                     if (this._syncHistoryToggleState) this._syncHistoryToggleState();
+                }
+            }
+
+            if (this.browserPanel) {
+                // Re-dock unconditionally: the params side may just have moved,
+                // and the browser rides along with it.
+                if (this._dockBrowserPanel) this._dockBrowserPanel();
+                const b = data.browser;
+                if (b) {
+                    if (b.width) this.browserPanel.style.width = b.width;
+                    if (b.previewHeight) this._setBrowserPreviewHeight(b.previewHeight);
+                    if (typeof b.visible === 'boolean') this.toggleFileBrowser(b.visible);
                 }
             }
         } catch (e) {
