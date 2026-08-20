@@ -79,11 +79,16 @@ export const BrowserMixin = {
     },
 
     /**
-     * Put the panel on its own side of the viewport.
+     * Put the panel on its own side of the viewport, right up against it.
      *
-     * When it shares a side with the params panel, params keeps the outer edge
-     * and the browser sits inboard of it — so the two never swap places as you
-     * drag their widths. Called again whenever either side changes.
+     * That single rule settles every arrangement without knowing anything about
+     * the other panels: the params panel and the history strip are both plain
+     * flex children of the main area (the strip's CSS says `absolute`, but
+     * _initHistoryPanel overrides it to `relative` at startup, so it takes real
+     * width like everything else). Whichever of them shares this side simply
+     * keeps the outer edge, and the browser tucks in beside the picture.
+     *
+     * Called again whenever any of the three sides changes.
      */
     _dockBrowserPanel() {
         const panel = this.browserPanel;
@@ -93,46 +98,9 @@ export const BrowserMixin = {
         try {
             panel.classList.toggle("left", side === "left");
             panel.classList.toggle("right", side !== "left");
-            const sharesWithParams = !!(this.paramsPanel &&
-                this.paramsPanel.parentNode === parent &&
-                (this.paramsSide || "right") === side);
-            if (side === "left") {
-                if (sharesWithParams) parent.insertBefore(panel, this.paramsPanel.nextSibling);
-                else parent.insertBefore(panel, parent.firstChild);
-            } else {
-                if (sharesWithParams) parent.insertBefore(panel, this.paramsPanel);
-                else parent.appendChild(panel);
-            }
+            parent.insertBefore(panel, side === "left" ? this.viewport : this.viewport.nextSibling);
         } catch (e) { /* keep the panel wherever it already is */ }
-        this._syncBrowserHistoryOffset();
         this._syncBrowserDockIcon();
-    },
-
-    /** Keep the browser clear of the history strip when they share a side.
-     *
-     * The strip is an absolute overlay pinned to one edge of the main area, so
-     * whatever flex child sits at that edge is drawn underneath it. That child
-     * is normally the viewport, which loses nothing but black — but the browser
-     * becomes it the moment the two end up on the same side, and a list of
-     * filenames hidden behind a column of thumbnails is no good to anyone.
-     *
-     * The strip always docks opposite the params panel, so this can only happen
-     * when the browser has been moved off the params side.
-     */
-    _syncBrowserHistoryOffset() {
-        const panel = this.browserPanel;
-        if (!panel) return;
-        const hp = this.historyPanel;
-        const side = this.browserSide || this.paramsSide || "right";
-        const open = !!(hp && hp.style.display !== "none" && hp.style.display !== "");
-        const hSide = (hp && hp.classList.contains("right")) ? "right" : "left";
-        const clash = open && hSide === side;
-        let w = 0;
-        if (clash) {
-            try { w = Math.round(hp.getBoundingClientRect().width); } catch (e) { w = 0; }
-        }
-        panel.style.marginLeft  = (clash && side === "left")  ? `${w}px` : "";
-        panel.style.marginRight = (clash && side === "right") ? `${w}px` : "";
     },
 
     /** The dock button shows which side the panel is on, as the params one does. */
@@ -224,7 +192,6 @@ export const BrowserMixin = {
         if (next && !this._browserLoaded) this.browseTo(this._browserDir, { force: true });
         else if (next) this._renderBrowserList();
         if (!next) this._stopBrowserPreview();
-        this._syncBrowserHistoryOffset();
         this._syncBrowserToggleState();
         if (this._afterViewportMoved) this._afterViewportMoved();
         this.queuePersistViewerState && this.queuePersistViewerState();

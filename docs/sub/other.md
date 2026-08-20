@@ -14,7 +14,7 @@ It opens on **ComfyUI's input folder**, which the server reports, so it is the r
 
 | Part | What it does |
 |---|---|
-| **Switch Side** | Move the whole panel to the other side of the viewport, the same control the parameters panel carries. When it ends up sharing a side with the history strip, it steps aside far enough to clear it. |
+| **Switch Side** | Move the whole panel to the other side of the viewport, the same control the parameters panel carries. It always tucks in against the picture, so whatever else is on that side — the parameters panel or the history strip — keeps the outer edge. |
 | **↑** | Up one folder. <kbd>Backspace</kbd> does the same while the list has focus. |
 | **Go to…** | Jump to Input, Output, Temp, your home folder, or any drive. |
 | **⟳** | Re-read the folder — pick up files written since you last looked. |

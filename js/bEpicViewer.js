@@ -463,11 +463,6 @@ class ViewerPanel extends HTMLElement {
     }
 
     _syncHistoryToggleState() {
-        // The file browser has to stand clear of the strip when they share a
-        // side, and this runs on every show/hide of it — see
-        // _syncBrowserHistoryOffset. Ahead of the early-out below, because a
-        // viewer with no toggle button still has both panels.
-        if (this._syncBrowserHistoryOffset) this._syncBrowserHistoryOffset();
         if (!this.historyToggleBtn) return;
         const panel = this.historyPanel || this.shadowRoot?.getElementById('history-panel');
         const visible = !!(panel && panel.style.display !== 'none' && panel.style.display !== '');
