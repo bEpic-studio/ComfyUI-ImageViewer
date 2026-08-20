@@ -1305,28 +1305,6 @@ export const UIMixin = {
 
     // ── History panel resize ─────────────────────────────────────────────────
 
-    setupHistoryResizing() {
-        if (!this.historyResizer || !this.historyPanel) return;
-        this.historyResizer.onmousedown = (e) => {
-            e.preventDefault();
-            const startX     = e.clientX;
-            const startWidth = this.historyPanel.getBoundingClientRect().width;
-            const win        = this.container.ownerDocument.defaultView || window;
-
-            const onMove = (evt) => {
-                try {
-                    const panelRect = this.historyPanel.getBoundingClientRect();
-                    const newWidth  = this.historyPanel.classList.contains('right')
-                        ? Math.round(Math.max(60, Math.min(600, panelRect.right - evt.clientX)))
-                        : Math.round(Math.max(60, Math.min(600, evt.clientX - panelRect.left)));
-                    this.historyPanel.style.width = `${newWidth}px`;
-                } catch (e) { /* ignore */ }
-            };
-            const onUp = () => { win.removeEventListener('mousemove', onMove); win.removeEventListener('mouseup', onUp); };
-            win.addEventListener('mousemove', onMove);
-            win.addEventListener('mouseup',   onUp);
-        };
-    },
 
     // ── Panel dragging ────────────────────────────────────────────────────────
 

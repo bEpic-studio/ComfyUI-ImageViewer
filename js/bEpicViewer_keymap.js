@@ -63,7 +63,9 @@ export function comboLabel(combo) {
     return parts.join("+");
 }
 
-const _historyOpen = (p) => !!(p && p.historyPanel && p.historyPanel.style.display !== "none");
+// Whether a panel is showing is the dock's to answer (mixinDock), not something
+// to re-derive from inline styles.
+const _historyOpen = (p) => !!(p && p.isPanelDocked && p.isPanelDocked("history"));
 
 const ACTION_DEFS = [
     { key: "StepBack",     label: "Step Back One Frame",     combo: { key: "ArrowLeft"  },

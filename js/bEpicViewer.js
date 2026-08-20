@@ -15,6 +15,7 @@ import { RotoMixin }     from "./bEpicViewer_roto.js";
 import { AnnotateMixin } from "./bEpicViewer_annotate.js";
 import { DnDMixin }      from "./bEpicViewer_mixinDnD.js";
 import { BrowserMixin }  from "./bEpicViewer_mixinBrowser.js";
+import { DockMixin }     from "./bEpicViewer_mixinDock.js";
 import { SendFromNodeMixin, registerSendToViewerMenu, sendSelectionToViewer } from "./bEpicViewer_sendFromNode.js";
 import {
     registerSendNode, registerToolNode, senderTabInfo, isViewerSourceNode,
@@ -124,6 +125,7 @@ const ICON_MAP = {
     'help-btn':          'icon-help',
     'params-dock-btn':   'icon-dock-right',
     'browser-dock-btn':  'icon-dock-right',
+    'history-dock-btn':  'icon-dock-right',
     'params-lock-btn':   'icon-unlock',
 };
 
@@ -263,7 +265,7 @@ class ViewerPanel extends HTMLElement {
                 tabOrder: (Array.isArray(this.tabOrder) ? this.tabOrder : []).filter(keepKey),
                 activeTab,
                 browserDir: this._browserDir || null,
-                browserSide: this.browserSide || null,
+                dock: this.serializeDock ? this.serializeDock() : null,
                 savedAt: Date.now(),
             };
             window.localStorage.setItem(this._getViewerStateStorageKey(), JSON.stringify(payload));
@@ -293,6 +295,16 @@ class ViewerPanel extends HTMLElement {
         const restoredColors = (parsed.tabColors && typeof parsed.tabColors === 'object') ? parsed.tabColors : {};
         const restoredOrder = Array.isArray(parsed.tabOrder) ? parsed.tabOrder : [];
         const restoredActive = typeof parsed.activeTab === 'string' ? parsed.activeTab : null;
+
+        // How the panels were arranged, restored ahead of the early-out below —
+        // a session that opened no tabs still deserves its layout back. This is
+        // applied AFTER the factory default (init order), so panels dragged
+        // somewhere new stay there across a reload; picking a named layout from
+        // the menu still overrides it, because that happens on demand.
+        if (parsed.dock && this.applyDockData) {
+            try { this.applyDockData(parsed.dock); }
+            catch (e) { console.warn('bEpicViewer: could not restore the dock layout', e); }
+        }
 
         const keys = Object.keys(restoredTabs);
         if (keys.length === 0 && Object.keys(restoredHistory).length === 0) return false;
@@ -383,6 +395,9 @@ class ViewerPanel extends HTMLElement {
         // worth taking the whole viewer down for if a future edit throws here.
         try { this._initFileBrowser(); }   // needs the toolbar button it toggles from
         catch (e) { console.warn('bEpicViewer: file browser failed to start', e); }
+        // Last: it adopts all three panels into rails, so they must exist first.
+        try { this._initDock(); }
+        catch (e) { console.warn('bEpicViewer: docking failed to start', e); }
         this._applyIconSkin();          // inject inline SVGs from the JSON skin
 
         await this.loadFactoryDefault();
@@ -391,11 +406,11 @@ class ViewerPanel extends HTMLElement {
         // Layout menu population can mutate nearby controls in some browsers,
         // so re-assert icon skin once layouts are ready.
         this._applyIconSkin();
-        // ...which stamps every ICON_MAP button with its DEFAULT glyph. For the
-        // browser's dock button the glyph is state, not decoration — it says
-        // which side the panel is on — so it has to be re-asserted afterwards
-        // or a viewer restored to the left opens showing the right-hand icon.
-        if (this._syncBrowserDockIcon) this._syncBrowserDockIcon();
+        // ...which stamps every ICON_MAP button with its DEFAULT glyph. A dock
+        // button's glyph is state, not decoration — it says which rail its panel
+        // is in — so those have to be re-asserted after the last skin pass, or a
+        // viewer restored to the left opens showing the right-hand icon.
+        if (this._syncDockIcons) this._syncDockIcons();
 
         this._bindToolbarHandlers();
 
@@ -464,9 +479,7 @@ class ViewerPanel extends HTMLElement {
 
     _syncHistoryToggleState() {
         if (!this.historyToggleBtn) return;
-        const panel = this.historyPanel || this.shadowRoot?.getElementById('history-panel');
-        const visible = !!(panel && panel.style.display !== 'none' && panel.style.display !== '');
-        this.historyToggleBtn.classList.toggle('active', visible);
+        this.historyToggleBtn.classList.toggle('active', this.isPanelDocked('history'));
     }
 
     //  Parameters panel bootstrap 
@@ -486,7 +499,6 @@ class ViewerPanel extends HTMLElement {
             this.paramsPanel.id           = "params-panel";
             this.paramsPanel.className    = "params-panel right";
             this.paramsPanel.innerHTML    = `
-                <div class="panel-resizer" id="panel-resizer"></div>
                 <div class="params-header">
                     <button id="params-dock-btn" title="Switch Side"></button>
                     <span id="params-title">No Node Selected</span>
@@ -502,10 +514,6 @@ class ViewerPanel extends HTMLElement {
             this.paramsPanel.classList.add('right');
         }
         const pq = (id) => this.paramsPanel.querySelector(`#${id}`);
-        if (!pq('panel-resizer')) {
-            const r = document.createElement('div'); r.className = 'panel-resizer'; r.id = 'panel-resizer';
-            this.paramsPanel.appendChild(r);
-        }
         const header = this.paramsPanel.querySelector('.params-header');
         if (header && !header.querySelector('#params-dock-btn')) {
             const b = document.createElement('button'); b.id = 'params-dock-btn'; b.title = 'Switch Side'; b.innerText = '';
@@ -520,7 +528,6 @@ class ViewerPanel extends HTMLElement {
         this.paramsTitle    = sr.getElementById('params-title')     || pq('params-title');
         this.paramsDockBtn  = sr.getElementById('params-dock-btn')  || pq('params-dock-btn');
         this.paramsLockBtn  = sr.getElementById('params-lock-btn')  || pq('params-lock-btn');
-        this.panelResizer   = sr.getElementById('panel-resizer')    || pq('panel-resizer');
 
         this.paramsBtn = sr.getElementById('params-btn');
         if (!this.paramsBtn) {
@@ -536,23 +543,21 @@ class ViewerPanel extends HTMLElement {
         this.paramsPanel.style.display = "none";
         this.paramsBtn.style.color     = "#eee";
 
-        if (this.paramsDockBtn) this.paramsDockBtn.onclick = () => {
+        if (this.paramsDockBtn) this.paramsDockBtn.onclick = (e) => {
+            e.stopPropagation();
             this.toggleParamsSide();
-            this.paramsDockBtn.classList.toggle('left', this.paramsSide === 'left');
         };
         if (this.paramsLockBtn) this.paramsLockBtn.onclick = () => {
             this.toggleParamsLock();
             this.paramsLockBtn.classList.toggle('locked', this.paramsLocked);
         };
-        this.setupParamsResizing();
 
         this.paramsBtn.onclick = () => {
             if (!this.paramsPanel) return;
-            const isHidden = this.paramsPanel.style.display === "none" || this.paramsPanel.style.display === "";
-            this.paramsPanel.style.display = isHidden ? "flex" : "none";
-            this.paramsBtn.style.color     = isHidden ? "#f60" : "#eee";
-            this.paramsBtn.classList.toggle('active', isHidden);
-            if (isHidden) this.updateParamsPanel(true);
+            const nowOpen = this.togglePanelDocked('params');
+            this.paramsBtn.style.color = nowOpen ? "#f60" : "#eee";
+            this.paramsBtn.classList.toggle('active', nowOpen);
+            if (nowOpen) this.updateParamsPanel(true);
         };
     }
 
@@ -563,28 +568,18 @@ class ViewerPanel extends HTMLElement {
         this.historyStrip   = sr.getElementById('history-strip');
         this.historyClearBtn = sr.getElementById('history-clear-btn');
         this.historyPanel   = sr.getElementById('history-panel');
-        this.historyResizer = sr.getElementById('history-resizer');
 
+        // Placement is the dock mixin's business now — see applyDockLayout.
         if (this.historyPanel) this.historyPanel.style.display = 'none';
 
-        try {
-            const parent = this.viewport && this.viewport.parentNode;
-            const hp     = this.historyPanel;
-            if (hp && parent) {
-                if (this.paramsSide === 'left') {
-                    hp.classList.remove('left');  hp.classList.add('right');
-                    parent.appendChild(hp);
-                } else {
-                    hp.classList.remove('right'); hp.classList.add('left');
-                    parent.insertBefore(hp, this.viewport);
-                }
-                hp.style.left = ''; hp.style.right = '';
-            }
-        } catch (e) {}
+        this.historyDockBtn = sr.getElementById('history-dock-btn');
+        if (this.historyDockBtn) this.historyDockBtn.onclick = (e) => {
+            e.stopPropagation();
+            this.togglePanelSide('history');
+        };
 
         if (this.historyClearBtn) {
             this.historyClearBtn.disabled = true;
-            if (this.historyPanel) this.historyPanel.style.position = 'relative';
             Object.assign(this.historyClearBtn.style, {
                 position: 'absolute', top: '6px', left: '6px', right: '6px',
                 width: 'calc(100% - 12px)', zIndex: '20',
@@ -620,11 +615,8 @@ class ViewerPanel extends HTMLElement {
         this.historyToggleBtn = sr.getElementById('history-toggle-btn');
         if (this.historyToggleBtn) {
             this.historyToggleBtn.onclick = () => {
-                const panel = this.historyPanel || sr.getElementById('history-panel');
-                if (!panel) return;
-                const isHidden = panel.style.display === 'none' || panel.style.display === '';
-                panel.style.display = isHidden ? 'flex' : 'none';
-                if (isHidden) { this._historyPanelSig = null; this.renderHistoryPanel(); }
+                const nowOpen = this.togglePanelDocked('history');
+                if (nowOpen) { this._historyPanelSig = null; this.renderHistoryPanel(); }
                 this._syncHistoryToggleState();
             };
         }
@@ -642,7 +634,6 @@ class ViewerPanel extends HTMLElement {
             });
         }
 
-        this.setupHistoryResizing();
     }
 
     //  Toolbar: dynamic button creation 
@@ -1066,6 +1057,7 @@ Object.assign(
     AnnotateMixin,
     DnDMixin,
     BrowserMixin,
+    DockMixin,
     SendFromNodeMixin,
 );
 

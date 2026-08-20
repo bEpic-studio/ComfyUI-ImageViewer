@@ -78,9 +78,28 @@ The bottom bar contains (left to right):
 | Loop mode | Loop / Ping-Pong / Once |
 | Toolbar icons | Shape toggle, Clear Cache, File Browser, Layouts, Undock, Help |
 
+## Docking Panels
+
+The history strip, the file browser and the parameters panel all live in one of two **rails**, left and right of the picture. A rail is a vertical stack, so panels can sit side by side *or* above one another.
+
+**Drag a panel by its header** to move it:
+
+- Drop it on the **left or right edge of the picture** to send it to that rail.
+- Drop it on the **top or bottom half of another panel** to place it above or below that one, in the same rail.
+- Drop it in the **middle of the picture** — or press <kbd>Esc</kbd> — to cancel. An outline shows exactly where it will land before you let go.
+
+Each header also carries a **Switch Side** button, which is the one-click version of dragging it to the other rail.
+
+**Resizing:**
+
+- The bar between a rail and the picture sets that rail's width; everything in the rail shares it.
+- The bar between two stacked panels sets how they split the height.
+- Panels have minimums, so neither drag can squeeze one out of existence. In the file browser the *preview* gives up its height first, so the file list stays readable however short the panel gets.
+
+Arrangements are remembered between sessions, and stored in a layout when you save one. Picking a saved layout from the layout menu applies its arrangement; otherwise the viewer opens the way you left it.
+
 ## Resizing & Moving the Panel
 
-- **Switch sides** — the parameters panel and the file browser each carry a dock button in their header that flips them to the other side of the viewport.
 - **Resize** — drag any of the eight edge/corner handles around the viewer border.
 - **Move** — drag an empty area of the tab bar to reposition the entire floating panel.
 

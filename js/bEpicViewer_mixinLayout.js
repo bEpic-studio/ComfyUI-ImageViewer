@@ -62,29 +62,10 @@ export const LayoutMixin = {
             height: this.style.height || styles.height,
         };
         try {
-            if (this.paramsPanel) {
-                const pStyles = window.getComputedStyle(this.paramsPanel);
-                layoutData.params = {
-                    visible: this.paramsPanel.style.display !== "none" && pStyles.display !== "none",
-                    width: this.paramsPanel.style.width || `${Math.round(this.paramsPanel.getBoundingClientRect().width)}px`,
-                    side: this.paramsSide || (this.paramsPanel.classList.contains('left') ? 'left' : 'right'),
-                };
-            }
-            if (this.historyPanel) {
-                const hStyles = window.getComputedStyle(this.historyPanel);
-                layoutData.history = {
-                    visible: this.historyPanel.style.display !== "none" && hStyles.display !== "none",
-                    width: this.historyPanel.style.width || `${Math.round(this.historyPanel.getBoundingClientRect().width)}px`,
-                };
-            }
-            if (this.browserPanel) {
-                layoutData.browser = {
-                    visible: this.isFileBrowserOpen(),
-                    width: this.browserPanel.style.width || `${Math.round(this.browserPanel.getBoundingClientRect().width)}px`,
-                    previewHeight: this._browserPreviewH || null,
-                    side: this.browserSide || (this.browserPanel.classList.contains('left') ? 'left' : 'right'),
-                };
-            }
+            // One object covers all three panels: which rail each is in, in what
+            // order, how tall, and whether it is showing. See mixinDock.
+            layoutData.dock = this.serializeDock ? this.serializeDock() : null;
+            layoutData.browserPreviewHeight = this._browserPreviewH || null;
         } catch (e) { console.warn('Could not read panel states', e); }
 
         this.customLayouts[name] = layoutData;
@@ -114,6 +95,9 @@ export const LayoutMixin = {
                 params: { visible: true, width: "300px", side: "right" },
                 history: { visible: false, width: "80px" },
                 browser: { visible: false, width: "300px" },
+                // Deliberately no `dock` key: the legacy block above is read
+                // through dockLayoutFromLegacy, which lands on the same
+                // arrangement and keeps one description of the default.
             };
         }
     },
@@ -129,29 +113,10 @@ export const LayoutMixin = {
             height: this.style.height || styles.height,
         };
         try {
-            if (this.paramsPanel) {
-                const pStyles = window.getComputedStyle(this.paramsPanel);
-                layoutData.params = {
-                    visible: this.paramsPanel.style.display !== "none" && pStyles.display !== "none",
-                    width: this.paramsPanel.style.width || `${Math.round(this.paramsPanel.getBoundingClientRect().width)}px`,
-                    side: this.paramsSide || (this.paramsPanel.classList.contains('left') ? 'left' : 'right'),
-                };
-            }
-            if (this.historyPanel) {
-                const hStyles = window.getComputedStyle(this.historyPanel);
-                layoutData.history = {
-                    visible: this.historyPanel.style.display !== "none" && hStyles.display !== "none",
-                    width: this.historyPanel.style.width || `${Math.round(this.historyPanel.getBoundingClientRect().width)}px`,
-                };
-            }
-            if (this.browserPanel) {
-                layoutData.browser = {
-                    visible: this.isFileBrowserOpen(),
-                    width: this.browserPanel.style.width || `${Math.round(this.browserPanel.getBoundingClientRect().width)}px`,
-                    previewHeight: this._browserPreviewH || null,
-                    side: this.browserSide || (this.browserPanel.classList.contains('left') ? 'left' : 'right'),
-                };
-            }
+            // One object covers all three panels: which rail each is in, in what
+            // order, how tall, and whether it is showing. See mixinDock.
+            layoutData.dock = this.serializeDock ? this.serializeDock() : null;
+            layoutData.browserPreviewHeight = this._browserPreviewH || null;
         } catch (e) { console.warn('Could not read panel states for factory default', e); }
 
         this.factoryDefaultLayout = layoutData;
@@ -316,67 +281,30 @@ export const LayoutMixin = {
         if (data.height) this.style.height = data.height;
 
         try {
-            if (data.params && this.paramsPanel) {
-                const p = data.params;
-                this.paramsPanel.style.display = p.visible ? "flex" : "none";
-                if (this.paramsBtn) this.paramsBtn.style.color = p.visible ? "#f60" : "#eee";
-                if (this.paramsBtn) this.paramsBtn.classList.toggle('active', !!p.visible);
-                if (p.width) this.paramsPanel.style.width = p.width;
-                if (p.side) {
-                    const parent = this.paramsPanel.parentNode;
-                    if (p.side === 'left') {
-                        this.paramsSide = 'left';
-                        this.paramsPanel.classList.replace('right', 'left');
-                        if (this.paramsDockBtn) this.paramsDockBtn.classList.add('left');
-                        if (this.viewport && parent) {
-                            parent.insertBefore(this.paramsPanel, this.viewport);
-                            try { if (this.historyPanel) parent.appendChild(this.historyPanel); } catch (e) {}
-                            if (this.historyPanel) { this.historyPanel.classList.remove('left'); this.historyPanel.classList.add('right'); }
-                            if (data.history && this.historyPanel) this.historyPanel.style.width = data.history.width;
-                        }
-                    } else {
-                        this.paramsSide = 'right';
-                        this.paramsPanel.classList.replace('left', 'right');
-                        if (this.paramsDockBtn) this.paramsDockBtn.classList.remove('left');
-                        if (this.viewport && parent) {
-                            try { if (this.historyPanel) parent.insertBefore(this.historyPanel, this.viewport); } catch (e) {}
-                            parent.appendChild(this.paramsPanel);
-                            if (this.historyPanel) { this.historyPanel.classList.remove('right'); this.historyPanel.classList.add('left'); }
-                            if (data.history && this.historyPanel) this.historyPanel.style.width = data.history.width;
-                        }
-                    }
-                }
-                if (p.visible) this.updateParamsPanel(true);
+            // Layouts saved before docking existed carry params/history/browser
+            // blocks instead; those are converted rather than dropped, because
+            // they live in the user's ComfyUI folder and outlive this change.
+            const dock = data.dock || (this.dockLayoutFromLegacy && this.dockLayoutFromLegacy(data));
+            if (dock && this.applyDockData) this.applyDockData(dock);
+
+            const ph = data.browserPreviewHeight ||
+                       (data.browser && data.browser.previewHeight) || null;
+            if (ph && this._setBrowserPreviewHeight) this._setBrowserPreviewHeight(ph);
+
+            if (this.paramsBtn) {
+                const open = this.isPanelDocked && this.isPanelDocked('params');
+                this.paramsBtn.style.color = open ? '#f60' : '#eee';
+                this.paramsBtn.classList.toggle('active', !!open);
+                if (open && this.updateParamsPanel) this.updateParamsPanel(true);
             }
-
-            if (data.history && this.historyPanel) {
-                if (data.history.width) this.historyPanel.style.width = data.history.width;
-
-                if (typeof data.history.visible === 'boolean') {
-                    this.historyPanel.style.display = data.history.visible ? 'flex' : 'none';
-                    if (data.history.visible) {
-                        this._historyPanelSig = null;
-                        this.renderHistoryPanel();
-                    }
-                    if (this._syncHistoryToggleState) this._syncHistoryToggleState();
-                }
+            if (this.isPanelDocked && this.isPanelDocked('history')) {
+                this._historyPanelSig = null;
+                this.renderHistoryPanel();
             }
-
-            if (this.browserPanel) {
-                const b = data.browser;
-                if (b) {
-                    // Only when the layout actually names a side. The built-in
-                    // fallback deliberately does not, so a viewer with no saved
-                    // layout keeps the side it was last left on rather than
-                    // being dragged back across on every reload.
-                    if (b.side === 'left' || b.side === 'right') this.browserSide = b.side;
-                    if (b.width) this.browserPanel.style.width = b.width;
-                    if (b.previewHeight) this._setBrowserPreviewHeight(b.previewHeight);
-                }
-                // Re-dock unconditionally and last: the params side may just
-                // have moved, and either side changing repositions the browser.
-                if (this._dockBrowserPanel) this._dockBrowserPanel();
-                if (b && typeof b.visible === 'boolean') this.toggleFileBrowser(b.visible);
+            if (this._syncHistoryToggleState) this._syncHistoryToggleState();
+            if (this._syncBrowserToggleState) this._syncBrowserToggleState();
+            if (this.isFileBrowserOpen && this.isFileBrowserOpen() && !this._browserLoaded) {
+                this.browseTo(this._browserDir, { force: true });
             }
         } catch (e) {
             console.warn('Could not restore panel states from layout data', e);

@@ -57,69 +57,17 @@ export const BrowserMixin = {
         this._browserAnchor = null;        // for shift-range selection
         this._browserLoaded = false;
         this._browserDir    = this._browserDir || this._savedBrowserDir();
-        // No side of its own yet → start where it used to live, beside the
-        // params panel, so an existing setup opens looking the same as before.
-        if (!this.browserSide) this.browserSide = this._savedBrowserSide() || this.paramsSide || "right";
 
-        this._dockBrowserPanel();
         this._bindBrowserControls();
         this._setupBrowserResizing();
         this._setBrowserPreviewHeight(this._browserPreviewH || _PREVIEW_DEFAULT);
         this._renderBrowserPreview(null);
     },
 
-    /** Flip the panel to the other side of the viewport. */
+    // Sides, widths and placement belong to the dock mixin. This just names the
+    // panel the header button acts on.
     toggleBrowserSide() {
-        this.browserSide = (this.browserSide === "left") ? "right" : "left";
-        this._dockBrowserPanel();
-        this.queuePersistViewerState && this.queuePersistViewerState();
-        // Both the picture and the compare layers are measured against the
-        // viewport, which just changed width.
-        if (this._afterViewportMoved) this._afterViewportMoved();
-    },
-
-    /**
-     * Put the panel on its own side of the viewport, right up against it.
-     *
-     * That single rule settles every arrangement without knowing anything about
-     * the other panels: the params panel and the history strip are both plain
-     * flex children of the main area (the strip's CSS says `absolute`, but
-     * _initHistoryPanel overrides it to `relative` at startup, so it takes real
-     * width like everything else). Whichever of them shares this side simply
-     * keeps the outer edge, and the browser tucks in beside the picture.
-     *
-     * Called again whenever any of the three sides changes.
-     */
-    _dockBrowserPanel() {
-        const panel = this.browserPanel;
-        const parent = this.viewport && this.viewport.parentNode;
-        if (!panel || !parent) return;
-        const side = this.browserSide || this.paramsSide || "right";
-        try {
-            panel.classList.toggle("left", side === "left");
-            panel.classList.toggle("right", side !== "left");
-            parent.insertBefore(panel, side === "left" ? this.viewport : this.viewport.nextSibling);
-        } catch (e) { /* keep the panel wherever it already is */ }
-        this._syncBrowserDockIcon();
-    },
-
-    /** The dock button shows which side the panel is on, as the params one does. */
-    _syncBrowserDockIcon() {
-        const btn = this.browserDockBtn;
-        if (!btn || !this._setIcon) return;
-        const side = this.browserSide || "right";
-        this._setIcon(btn, side === "left" ? "icon-dock-left" : "icon-dock-right");
-        btn.classList.toggle("left", side === "left");
-    },
-
-    /** The side this viewer was last left on, or null when it has no opinion. */
-    _savedBrowserSide() {
-        try {
-            const raw = window.localStorage.getItem(this._getViewerStateStorageKey());
-            const parsed = raw ? JSON.parse(raw) : null;
-            const side = parsed && parsed.browserSide;
-            return (side === "left" || side === "right") ? side : null;
-        } catch (e) { return null; }
+        this.togglePanelSide("browser");
     },
 
     /** The folder this viewer was last left in, or null for the server default. */
@@ -170,8 +118,10 @@ export const BrowserMixin = {
         }
 
         this.browserDockBtn = sr.getElementById("browser-dock-btn");
-        if (this.browserDockBtn) this.browserDockBtn.onclick = () => this.toggleBrowserSide();
-        this._syncBrowserDockIcon();
+        if (this.browserDockBtn) this.browserDockBtn.onclick = (e) => {
+            e.stopPropagation();
+            this.toggleBrowserSide();
+        };
 
         this.browserToggleBtn = sr.getElementById("browser-toggle-btn");
         if (this.browserToggleBtn) this.browserToggleBtn.onclick = () => this.toggleFileBrowser();
@@ -182,31 +132,24 @@ export const BrowserMixin = {
     // ── Show / hide ──────────────────────────────────────────────────────────
 
     toggleFileBrowser(force) {
-        const panel = this.browserPanel;
-        if (!panel) return;
-        const visible = panel.style.display !== "none" && panel.style.display !== "";
-        const next    = (force === undefined) ? !visible : !!force;
-        panel.style.display = next ? "flex" : "none";
+        if (!this.browserPanel) return;
+        const next = (force === undefined) ? !this.isFileBrowserOpen() : !!force;
+        this.setPanelDocked("browser", next);
         // Nothing is listed until the panel is first opened, so that open has to
         // fetch — from the folder the last session left it in, when there was one.
         if (next && !this._browserLoaded) this.browseTo(this._browserDir, { force: true });
         else if (next) this._renderBrowserList();
         if (!next) this._stopBrowserPreview();
         this._syncBrowserToggleState();
-        if (this._afterViewportMoved) this._afterViewportMoved();
-        this.queuePersistViewerState && this.queuePersistViewerState();
     },
 
     _syncBrowserToggleState() {
         if (!this.browserToggleBtn) return;
-        const panel = this.browserPanel;
-        const visible = !!(panel && panel.style.display !== "none" && panel.style.display !== "");
-        this.browserToggleBtn.classList.toggle("active", visible);
+        this.browserToggleBtn.classList.toggle("active", this.isFileBrowserOpen());
     },
 
     isFileBrowserOpen() {
-        const p = this.browserPanel;
-        return !!(p && p.style.display !== "none" && p.style.display !== "");
+        return !!(this.isPanelDocked && this.isPanelDocked("browser"));
     },
 
     // ── Listing ──────────────────────────────────────────────────────────────
@@ -719,32 +662,13 @@ export const BrowserMixin = {
         if (this.browserPreview) this.browserPreview.style.height = `${h}px`;
     },
 
+    // Only the preview's height. The panel's WIDTH is the rail's business now
+    // (mixinDock), since every panel in a rail shares one.
     _setupBrowserResizing() {
         const sr = this.shadowRoot;
         const win = () => (this.container && this.container.ownerDocument.defaultView) || window;
 
-        // Width: drag the edge that faces the viewport.
-        const edge = sr.getElementById("browser-resizer");
-        if (edge) edge.onmousedown = (e) => {
-            e.preventDefault();
-            const w = win();
-            const onMove = (ev) => {
-                const r = this.browserPanel.getBoundingClientRect();
-                const next = this.browserPanel.classList.contains("left")
-                    ? ev.clientX - r.left
-                    : r.right - ev.clientX;
-                this.browserPanel.style.width = `${Math.round(Math.max(180, Math.min(720, next)))}px`;
-            };
-            const onUp = () => {
-                w.removeEventListener("mousemove", onMove);
-                w.removeEventListener("mouseup", onUp);
-                if (this._afterViewportMoved) this._afterViewportMoved();
-            };
-            w.addEventListener("mousemove", onMove);
-            w.addEventListener("mouseup", onUp);
-        };
-
-        // Height: drag the bar between the list and the preview.
+        // Drag the bar between the list and the preview.
         const split = sr.getElementById("browser-split");
         if (split) split.onmousedown = (e) => {
             e.preventDefault();

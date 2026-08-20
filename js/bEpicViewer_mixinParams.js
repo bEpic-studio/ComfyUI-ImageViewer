@@ -51,48 +51,10 @@ export const ParamsMixin = {
         }
     },
 
+    // Sides and widths belong to the dock mixin — this just names the panel it
+    // acts on. Kept as a method because the header button and the keymap call it.
     toggleParamsSide() {
-        if (!this.paramsPanel || !this.viewport) return;
-        const parent = this.paramsPanel.parentNode;
-
-        if (this.paramsSide === "right") {
-            this.paramsSide = "left";
-            this.paramsPanel.classList.replace("right", "left");
-            this._setIcon(this.paramsDockBtn, 'icon-dock-left');
-            parent.insertBefore(this.paramsPanel, this.viewport);
-            try { if (this.historyPanel) parent.appendChild(this.historyPanel); } catch (e) {}
-            if (this.historyPanel) { this.historyPanel.classList.remove('left'); this.historyPanel.classList.add('right'); }
-        } else {
-            this.paramsSide = "right";
-            this.paramsPanel.classList.replace("left", "right");
-            this._setIcon(this.paramsDockBtn, 'icon-dock-right');
-            try { if (this.historyPanel) parent.insertBefore(this.historyPanel, this.viewport); } catch (e) {}
-            parent.appendChild(this.paramsPanel);
-            if (this.historyPanel) { this.historyPanel.classList.remove('right'); this.historyPanel.classList.add('left'); }
-        }
-        // The file browser docks against the params panel, so it follows it over.
-        if (this._dockBrowserPanel) this._dockBrowserPanel();
-    },
-
-    setupParamsResizing() {
-        if (!this.panelResizer || !this.paramsPanel) return;
-
-        let startX, startWidth;
-        this.panelResizer.onmousedown = (e) => {
-            e.preventDefault();
-            startX      = e.clientX;
-            startWidth  = this.paramsPanel.getBoundingClientRect().width;
-            const win   = this.container.ownerDocument.defaultView || window;
-
-            const onMove = (evt) => {
-                const dx       = evt.clientX - startX;
-                const newWidth = this.paramsSide === "right" ? startWidth - dx : startWidth + dx;
-                this.paramsPanel.style.width = `${Math.max(200, Math.min(800, newWidth))}px`;
-            };
-            const onUp = () => { win.removeEventListener('mousemove', onMove); win.removeEventListener('mouseup', onUp); };
-            win.addEventListener('mousemove', onMove);
-            win.addEventListener('mouseup',   onUp);
-        };
+        this.togglePanelSide("params");
     },
 
     applyToSelectedNodes(name, value) {
@@ -146,7 +108,7 @@ export const ParamsMixin = {
             if (!running) return;
             requestAnimationFrame(tick);
 
-            if (!this.paramsPanel || this.paramsPanel.style.display === "none" || this.paramsPanel.style.display === "") return;
+            if (!this.isPanelDocked || !this.isPanelDocked("params")) return;
             if (this.paramsLocked) return;
 
             const selected = (app && app.canvas) ? app.canvas.selected_nodes : null;

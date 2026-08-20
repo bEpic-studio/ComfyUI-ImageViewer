@@ -416,14 +416,6 @@ option { text-align: left; }
 .params-panel.right { border-left: 1px solid #333; }
 .params-panel.left { border-right: 1px solid #333; }
 
-.panel-resizer {
-    position: absolute; top: 0; bottom: 0; width: 10px;
-    cursor: col-resize; z-index: 30; background: transparent;
-}
-.params-panel.right .panel-resizer { left: -5px; }
-.params-panel.left .panel-resizer { right: -5px; }
-.panel-resizer:hover { background: rgba(255, 102, 0, 0.1); }
-
 .params-header {
     padding: 8px; background: #111; border-bottom: 1px solid #333;
     font-size: 12px; color: #ccc; font-weight: bold;
@@ -482,22 +474,31 @@ textarea.param-input {
     margin: 0 !important;
 }
 
-/* History Panel */
+/* History Panel
+   `relative`, not `absolute`. The CSS used to say absolute and _initHistoryPanel
+   overrode it to relative at runtime — the panel has always been a normal flex
+   child, and code written against the stylesheet read it as an overlay that
+   floated over its neighbour. It does not. It takes width like anything else. */
 .history-panel {
-    position: absolute;
-    left: auto; right: auto; top: 0; bottom: 0; width: 80px;
+    position: relative;
+    width: 80px;
     background: linear-gradient(180deg,#0d0d0d,#0b0b0b);
-    border-right: 1px solid #222; display: flex; flex-direction: column; z-index: 40;
+    display: flex; flex-direction: column;
     box-sizing: border-box; padding-top: 48px;
     border-radius: 6px;
+    border-left: 1px solid #222; border-right: 1px solid #222;
 }
-.history-panel.left { left: 0; right: auto; border-right: 1px solid #222; border-left: none; }
-.history-panel.right { right: 0; left: auto; border-left: 1px solid #222; border-right: none; }
-.history-resizer { position: absolute; top: 0; bottom: 0; width: 12px; background: transparent; cursor: ew-resize; z-index: 9999; pointer-events: auto; }
-.history-panel.left .history-resizer { right: 0; }
-.history-panel.right .history-resizer { left: 0; }
-.history-resizer:hover { background: rgba(255,102,0,0.06); }
-.history-header { color: #aaa; font-size: 11px; padding: 6px 6px; border-bottom: 1px solid #222; text-align: center; }
+.history-header {
+    color: #aaa; font-size: 11px; padding: 4px 4px; border-bottom: 1px solid #222;
+    display: flex; align-items: center; gap: 2px;
+}
+.history-header .history-title { flex: 1; min-width: 0; text-align: center; overflow: hidden; }
+#history-dock-btn {
+    background: transparent; border: none; color: #888; cursor: pointer;
+    min-width: 18px; min-height: 18px; height: 18px; padding: 0;
+}
+#history-dock-btn:hover { color: #fff; }
+#history-dock-btn > svg { width: 13px; height: 13px; }
 .history-strip { padding: 6px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; align-items: center; }
 .history-strip { padding: 8px 6px 10px 6px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; align-items: center; flex: 1; min-height: 0; }
 .history-thumb { position: relative; width: 72px; height: 52px; flex-shrink: 0; background: #050505; border-radius: 6px; overflow: hidden; border: 1px solid #1a1a1a; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02); }
@@ -518,6 +519,57 @@ textarea.param-input {
   background: #5b9bf5; box-shadow: 0 0 0 1px rgba(0,0,0,0.55);
 }
 
+/* ── Docking ───────────────────────────────────────────────────────────────
+   The main area is a row: [left rail][splitter][viewport][splitter][right rail].
+   A rail is a vertical stack of panels sharing one width. Panels are moved
+   between rails by applyDockLayout and by nothing else. */
+.dock-rail {
+    display: none;                 /* applyDockLayout turns on a rail with panels in it */
+    flex-direction: column;
+    flex: 0 0 auto;
+    min-width: 0;
+    overflow: hidden;
+}
+/* Inside a rail the rail owns the width and the flex `size` owns the height, so
+   a panel's own width and min-width have to stand down. */
+.dock-rail > .params-panel,
+.dock-rail > .browser-panel,
+.dock-rail > .history-panel {
+    width: auto; min-width: 0; flex-shrink: 1;
+    margin: 0; border-radius: 0;
+}
+.rail-splitter {
+    display: none;                 /* shown alongside a rail that has panels */
+    flex: 0 0 6px; align-self: stretch;
+    cursor: col-resize; background: transparent; z-index: 30;
+}
+.stack-splitter {
+    flex: 0 0 6px;
+    cursor: row-resize; background: #111;
+    border-top: 1px solid #222; border-bottom: 1px solid #222;
+}
+.rail-splitter:hover, .rail-splitter.dragging,
+.stack-splitter:hover, .stack-splitter.dragging { background: rgba(255,102,0,0.30); }
+
+/* Drag-to-dock: a preview of where the panel would land, and a label under the
+   cursor. Lives inside .main-area, so it travels with the panel when the whole
+   viewer is popped out into another window. */
+.dock-overlay { position: absolute; inset: 0; display: none; pointer-events: none; z-index: 200; }
+.dock-overlay.active { display: block; }
+.dock-preview {
+    position: absolute; display: none;
+    border: 2px solid #f60; background: rgba(255,102,0,0.16);
+    border-radius: 4px; box-shadow: 0 0 0 1px rgba(0,0,0,0.5) inset;
+}
+.dock-preview.shown { display: block; }
+.dock-ghost {
+    position: absolute; padding: 3px 9px; font-size: 11px; line-height: 1.4;
+    background: rgba(18,18,18,0.96); color: #f60;
+    border: 1px solid #f60; border-radius: 4px; white-space: nowrap;
+}
+.dock-grab { cursor: grab; user-select: none; }
+.dock-dragging { opacity: 0.4; }
+
 /* File Browser Panel
    A flex sibling of the viewport rather than an overlay like the history strip,
    so it takes real width instead of covering the picture. It docks on the same
@@ -529,9 +581,6 @@ textarea.param-input {
     display: flex; flex-direction: column; position: relative; z-index: 20;
     box-sizing: border-box; overflow: hidden;
 }
-.browser-panel.right .panel-resizer { left: -5px; }
-.browser-panel.left  .panel-resizer { right: -5px; }
-
 .browser-header {
     display: flex; gap: 4px; align-items: center;
     padding: 6px; background: #111; border-bottom: 1px solid #333;
@@ -563,7 +612,10 @@ textarea.param-input {
 .browser-path:focus { color: #cfc; background: #0c0c0c; }
 
 .browser-list {
-    flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+    /* Keeps a usable minimum: in a short rail the PREVIEW gives up its height
+       first (see .browser-preview-stage). A file browser with no list is no
+       use; one with a small preview still is. */
+    flex: 1 1 0; min-height: 48px; overflow-y: auto; overflow-x: hidden;
     padding: 4px 0; outline: none;
 }
 .browser-row {
@@ -589,7 +641,11 @@ textarea.param-input {
 .browser-split:hover { background: rgba(255,102,0,0.18); }
 
 .browser-preview-stage {
-    flex: 0 0 auto; height: 190px; background: #000; position: relative;
+    /* `0 1 auto`, not `0 0 auto`: the height set by the splitter is what it
+       WANTS, and it yields when the panel is too short to grant it — which it
+       is as soon as the browser shares a rail with another panel. */
+    flex: 0 1 auto; height: 190px; min-height: 0;
+    background: #000; position: relative;
     display: flex; align-items: center; justify-content: center; overflow: hidden;
 }
 .browser-preview-stage img,
