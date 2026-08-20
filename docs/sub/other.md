@@ -14,6 +14,7 @@ It opens on **ComfyUI's input folder**, which the server reports, so it is the r
 
 | Part | What it does |
 |---|---|
+| **Switch Side** | Move the whole panel to the other side of the viewport, the same control the parameters panel carries. When it ends up sharing a side with the history strip, it steps aside far enough to clear it. |
 | **↑** | Up one folder. <kbd>Backspace</kbd> does the same while the list has focus. |
 | **Go to…** | Jump to Input, Output, Temp, your home folder, or any drive. |
 | **⟳** | Re-read the folder — pick up files written since you last looked. |
@@ -32,6 +33,8 @@ Everything the viewer can display is listed, `exr`, `dpx`, `tiff` and `hdr` incl
 - **Select several** — <kbd>Ctrl</kbd>+click to add one, <kbd>Shift</kbd>+click for a range — and drag or open the lot in one go. Dragging a row that is part of the selection takes the whole selection; dragging any other row takes just that one.
 
 ### How they arrive
+
+The side it is on is remembered between sessions, and stored in a layout when you save one — a saved layout wins on load, exactly as it does for the parameters panel.
 
 Images open as **one tab holding the whole sequence**, so the timeline scrubs the folder. Each video gets a tab of its own, since a video tab holds one clip, and arrives with its real frame rate and frame count rather than a guess. Tabs opened this way are ordinary tabs: <kbd>Shift</kbd>+click one to compare it against another, and they survive a reload.
 

@@ -123,6 +123,7 @@ const ICON_MAP = {
     'history-clear-btn': 'icon-delete',
     'help-btn':          'icon-help',
     'params-dock-btn':   'icon-dock-right',
+    'browser-dock-btn':  'icon-dock-right',
     'params-lock-btn':   'icon-unlock',
 };
 
@@ -262,6 +263,7 @@ class ViewerPanel extends HTMLElement {
                 tabOrder: (Array.isArray(this.tabOrder) ? this.tabOrder : []).filter(keepKey),
                 activeTab,
                 browserDir: this._browserDir || null,
+                browserSide: this.browserSide || null,
                 savedAt: Date.now(),
             };
             window.localStorage.setItem(this._getViewerStateStorageKey(), JSON.stringify(payload));
@@ -389,6 +391,11 @@ class ViewerPanel extends HTMLElement {
         // Layout menu population can mutate nearby controls in some browsers,
         // so re-assert icon skin once layouts are ready.
         this._applyIconSkin();
+        // ...which stamps every ICON_MAP button with its DEFAULT glyph. For the
+        // browser's dock button the glyph is state, not decoration — it says
+        // which side the panel is on — so it has to be re-asserted afterwards
+        // or a viewer restored to the left opens showing the right-hand icon.
+        if (this._syncBrowserDockIcon) this._syncBrowserDockIcon();
 
         this._bindToolbarHandlers();
 
@@ -456,6 +463,11 @@ class ViewerPanel extends HTMLElement {
     }
 
     _syncHistoryToggleState() {
+        // The file browser has to stand clear of the strip when they share a
+        // side, and this runs on every show/hide of it — see
+        // _syncBrowserHistoryOffset. Ahead of the early-out below, because a
+        // viewer with no toggle button still has both panels.
+        if (this._syncBrowserHistoryOffset) this._syncBrowserHistoryOffset();
         if (!this.historyToggleBtn) return;
         const panel = this.historyPanel || this.shadowRoot?.getElementById('history-panel');
         const visible = !!(panel && panel.style.display !== 'none' && panel.style.display !== '');

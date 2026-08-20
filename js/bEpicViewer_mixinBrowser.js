@@ -57,6 +57,9 @@ export const BrowserMixin = {
         this._browserAnchor = null;        // for shift-range selection
         this._browserLoaded = false;
         this._browserDir    = this._browserDir || this._savedBrowserDir();
+        // No side of its own yet → start where it used to live, beside the
+        // params panel, so an existing setup opens looking the same as before.
+        if (!this.browserSide) this.browserSide = this._savedBrowserSide() || this.paramsSide || "right";
 
         this._dockBrowserPanel();
         this._bindBrowserControls();
@@ -65,37 +68,90 @@ export const BrowserMixin = {
         this._renderBrowserPreview(null);
     },
 
+    /** Flip the panel to the other side of the viewport. */
+    toggleBrowserSide() {
+        this.browserSide = (this.browserSide === "left") ? "right" : "left";
+        this._dockBrowserPanel();
+        this.queuePersistViewerState && this.queuePersistViewerState();
+        // Both the picture and the compare layers are measured against the
+        // viewport, which just changed width.
+        if (this._afterViewportMoved) this._afterViewportMoved();
+    },
+
     /**
-     * Put the panel on the params panel's side, between it and the viewport.
+     * Put the panel on its own side of the viewport.
      *
-     * That side is the one the history panel never uses: history is positioned
-     * absolutely and always docks opposite the params panel, so anywhere else
-     * would leave the two stacked on top of each other. Called again whenever
-     * the params panel changes sides.
+     * When it shares a side with the params panel, params keeps the outer edge
+     * and the browser sits inboard of it — so the two never swap places as you
+     * drag their widths. Called again whenever either side changes.
      */
     _dockBrowserPanel() {
         const panel = this.browserPanel;
         const parent = this.viewport && this.viewport.parentNode;
         if (!panel || !parent) return;
+        const side = this.browserSide || this.paramsSide || "right";
         try {
-            if (this.paramsSide === "left") {
-                panel.classList.remove("right");
-                panel.classList.add("left");
-                if (this.paramsPanel && this.paramsPanel.parentNode === parent) {
-                    parent.insertBefore(panel, this.paramsPanel.nextSibling);
-                } else {
-                    parent.insertBefore(panel, this.viewport);
-                }
+            panel.classList.toggle("left", side === "left");
+            panel.classList.toggle("right", side !== "left");
+            const sharesWithParams = !!(this.paramsPanel &&
+                this.paramsPanel.parentNode === parent &&
+                (this.paramsSide || "right") === side);
+            if (side === "left") {
+                if (sharesWithParams) parent.insertBefore(panel, this.paramsPanel.nextSibling);
+                else parent.insertBefore(panel, parent.firstChild);
             } else {
-                panel.classList.remove("left");
-                panel.classList.add("right");
-                if (this.paramsPanel && this.paramsPanel.parentNode === parent) {
-                    parent.insertBefore(panel, this.paramsPanel);
-                } else {
-                    parent.appendChild(panel);
-                }
+                if (sharesWithParams) parent.insertBefore(panel, this.paramsPanel);
+                else parent.appendChild(panel);
             }
         } catch (e) { /* keep the panel wherever it already is */ }
+        this._syncBrowserHistoryOffset();
+        this._syncBrowserDockIcon();
+    },
+
+    /** Keep the browser clear of the history strip when they share a side.
+     *
+     * The strip is an absolute overlay pinned to one edge of the main area, so
+     * whatever flex child sits at that edge is drawn underneath it. That child
+     * is normally the viewport, which loses nothing but black — but the browser
+     * becomes it the moment the two end up on the same side, and a list of
+     * filenames hidden behind a column of thumbnails is no good to anyone.
+     *
+     * The strip always docks opposite the params panel, so this can only happen
+     * when the browser has been moved off the params side.
+     */
+    _syncBrowserHistoryOffset() {
+        const panel = this.browserPanel;
+        if (!panel) return;
+        const hp = this.historyPanel;
+        const side = this.browserSide || this.paramsSide || "right";
+        const open = !!(hp && hp.style.display !== "none" && hp.style.display !== "");
+        const hSide = (hp && hp.classList.contains("right")) ? "right" : "left";
+        const clash = open && hSide === side;
+        let w = 0;
+        if (clash) {
+            try { w = Math.round(hp.getBoundingClientRect().width); } catch (e) { w = 0; }
+        }
+        panel.style.marginLeft  = (clash && side === "left")  ? `${w}px` : "";
+        panel.style.marginRight = (clash && side === "right") ? `${w}px` : "";
+    },
+
+    /** The dock button shows which side the panel is on, as the params one does. */
+    _syncBrowserDockIcon() {
+        const btn = this.browserDockBtn;
+        if (!btn || !this._setIcon) return;
+        const side = this.browserSide || "right";
+        this._setIcon(btn, side === "left" ? "icon-dock-left" : "icon-dock-right");
+        btn.classList.toggle("left", side === "left");
+    },
+
+    /** The side this viewer was last left on, or null when it has no opinion. */
+    _savedBrowserSide() {
+        try {
+            const raw = window.localStorage.getItem(this._getViewerStateStorageKey());
+            const parsed = raw ? JSON.parse(raw) : null;
+            const side = parsed && parsed.browserSide;
+            return (side === "left" || side === "right") ? side : null;
+        } catch (e) { return null; }
     },
 
     /** The folder this viewer was last left in, or null for the server default. */
@@ -145,6 +201,10 @@ export const BrowserMixin = {
             });
         }
 
+        this.browserDockBtn = sr.getElementById("browser-dock-btn");
+        if (this.browserDockBtn) this.browserDockBtn.onclick = () => this.toggleBrowserSide();
+        this._syncBrowserDockIcon();
+
         this.browserToggleBtn = sr.getElementById("browser-toggle-btn");
         if (this.browserToggleBtn) this.browserToggleBtn.onclick = () => this.toggleFileBrowser();
 
@@ -164,6 +224,7 @@ export const BrowserMixin = {
         if (next && !this._browserLoaded) this.browseTo(this._browserDir, { force: true });
         else if (next) this._renderBrowserList();
         if (!next) this._stopBrowserPreview();
+        this._syncBrowserHistoryOffset();
         this._syncBrowserToggleState();
         if (this._afterViewportMoved) this._afterViewportMoved();
         this.queuePersistViewerState && this.queuePersistViewerState();

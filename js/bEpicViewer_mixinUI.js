@@ -1320,6 +1320,8 @@ export const UIMixin = {
                         ? Math.round(Math.max(60, Math.min(600, panelRect.right - evt.clientX)))
                         : Math.round(Math.max(60, Math.min(600, evt.clientX - panelRect.left)));
                     this.historyPanel.style.width = `${newWidth}px`;
+                    // Whatever the strip overlays has to move with it.
+                    if (this._syncBrowserHistoryOffset) this._syncBrowserHistoryOffset();
                 } catch (e) { /* ignore */ }
             };
             const onUp = () => { win.removeEventListener('mousemove', onMove); win.removeEventListener('mouseup', onUp); };

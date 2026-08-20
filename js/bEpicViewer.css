@@ -537,6 +537,15 @@ textarea.param-input {
     padding: 6px; background: #111; border-bottom: 1px solid #333;
     height: 30px; box-sizing: border-box;
 }
+#browser-dock-btn {
+    background: transparent; border: none; color: #888; cursor: pointer;
+    /* min-height is what actually decides this: the blanket `button` rule sets
+       32px, which beats any height and is why the params panel's own dock
+       button overflows its 30px header. Overridden here so this one fits. */
+    min-width: 20px; min-height: 20px; height: 20px; padding: 0; margin-right: 2px;
+}
+#browser-dock-btn:hover { color: #fff; }
+#browser-dock-btn > svg { width: 14px; height: 14px; }
 .browser-btn {
     background: #1a1a1a; color: #ccc; border: 1px solid #333; border-radius: 4px;
     width: 24px; height: 20px; line-height: 1; font-size: 12px; cursor: pointer; padding: 0;

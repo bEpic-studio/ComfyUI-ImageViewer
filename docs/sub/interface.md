@@ -80,6 +80,7 @@ The bottom bar contains (left to right):
 
 ## Resizing & Moving the Panel
 
+- **Switch sides** — the parameters panel and the file browser each carry a dock button in their header that flips them to the other side of the viewport.
 - **Resize** — drag any of the eight edge/corner handles around the viewer border.
 - **Move** — drag an empty area of the tab bar to reposition the entire floating panel.
 

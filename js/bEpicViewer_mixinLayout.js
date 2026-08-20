@@ -82,6 +82,7 @@ export const LayoutMixin = {
                     visible: this.isFileBrowserOpen(),
                     width: this.browserPanel.style.width || `${Math.round(this.browserPanel.getBoundingClientRect().width)}px`,
                     previewHeight: this._browserPreviewH || null,
+                    side: this.browserSide || (this.browserPanel.classList.contains('left') ? 'left' : 'right'),
                 };
             }
         } catch (e) { console.warn('Could not read panel states', e); }
@@ -148,6 +149,7 @@ export const LayoutMixin = {
                     visible: this.isFileBrowserOpen(),
                     width: this.browserPanel.style.width || `${Math.round(this.browserPanel.getBoundingClientRect().width)}px`,
                     previewHeight: this._browserPreviewH || null,
+                    side: this.browserSide || (this.browserPanel.classList.contains('left') ? 'left' : 'right'),
                 };
             }
         } catch (e) { console.warn('Could not read panel states for factory default', e); }
@@ -361,15 +363,20 @@ export const LayoutMixin = {
             }
 
             if (this.browserPanel) {
-                // Re-dock unconditionally: the params side may just have moved,
-                // and the browser rides along with it.
-                if (this._dockBrowserPanel) this._dockBrowserPanel();
                 const b = data.browser;
                 if (b) {
+                    // Only when the layout actually names a side. The built-in
+                    // fallback deliberately does not, so a viewer with no saved
+                    // layout keeps the side it was last left on rather than
+                    // being dragged back across on every reload.
+                    if (b.side === 'left' || b.side === 'right') this.browserSide = b.side;
                     if (b.width) this.browserPanel.style.width = b.width;
                     if (b.previewHeight) this._setBrowserPreviewHeight(b.previewHeight);
-                    if (typeof b.visible === 'boolean') this.toggleFileBrowser(b.visible);
                 }
+                // Re-dock unconditionally and last: the params side may just
+                // have moved, and either side changing repositions the browser.
+                if (this._dockBrowserPanel) this._dockBrowserPanel();
+                if (b && typeof b.visible === 'boolean') this.toggleFileBrowser(b.visible);
             }
         } catch (e) {
             console.warn('Could not restore panel states from layout data', e);
