@@ -307,23 +307,28 @@ export function resolveTabNode(panel, tabKey) {
 
 // The output slot carrying a picture. bEpicSendToViewer's passthrough is typed
 // ANY, so name and wildcard both count before falling back to the first slot.
-function imageOutputSlot(node) {
+//
+// `strict` drops that last fallback, and the canvas selection always asks for
+// it: a tab's node is something the viewer already drew a picture from, but a
+// selection is whatever the user happened to click, and slot 0 of a checkpoint
+// loader is a MODEL. Wiring that into an IMAGE input fails and leaves an
+// orphaned tool node sitting in the graph.
+function imageOutputSlot(node, { strict = false } = {}) {
     const outs = (node && node.outputs) || [];
     let i = outs.findIndex((o) => String(o.type).toUpperCase() === "IMAGE");
     if (i < 0) i = outs.findIndex((o) => /^image$/i.test(o.name || ""));
     if (i < 0) i = outs.findIndex((o) => o.type === "*");
-    if (i < 0 && outs.length) i = 0;
+    if (i < 0 && !strict && outs.length) i = 0;
     return i;
 }
 
-/** The { node, slot } a new tool node for this tab should be fed from.
+/** The { node, slot } a tool node hung off `node` should be fed from.
  *
- * Normally that is whatever the tab's own node hands on. A tool node is the
- * exception: it emits a matte or a prompt, never a picture, so adding a second
- * tool to a Roto tab wires the new node to the same upstream image the Roto
- * node is looking at rather than to the Roto node itself. */
-export function imageSourceForTab(panel, tabKey) {
-    const node = resolveTabNode(panel, tabKey);
+ * Normally that is whatever the node itself hands on. A tool node is the
+ * exception: it emits a matte or a prompt, never a picture, so hanging a second
+ * tool off a Roto node wires the new one to the same upstream image the Roto
+ * node is looking at rather than to the Roto node's own output. */
+export function imageSourceForNode(node, opts) {
     if (!node) return null;
 
     if (nodeToolKind(node)) {
@@ -336,8 +341,68 @@ export function imageSourceForTab(panel, tabKey) {
         return null;
     }
 
-    const slot = imageOutputSlot(node);
+    const slot = imageOutputSlot(node, opts);
     return slot < 0 ? null : { node, slot };
+}
+
+/** The { node, slot } a new tool node for this tab should be fed from. */
+export function imageSourceForTab(panel, tabKey) {
+    return imageSourceForNode(resolveTabNode(panel, tabKey));
+}
+
+// ── what the canvas has selected ─────────────────────────────────────────────
+
+/** The selected graph nodes, the one the user touched last leading.
+ *
+ * `selected_nodes` is keyed by node id and those keys are numeric strings, so
+ * Object.values hands them back in id order rather than the order they were
+ * picked. `current_node` is the one clicked most recently, which is the one
+ * "selected" means when several are. It only ever reorders a selection that
+ * already exists — on its own it can be a leftover from a node the pointer
+ * merely passed over, and that must not bind a tool to anything. */
+function selectedGraphNodes() {
+    const canvas = app.canvas;
+    const nodes = Object.values((canvas && canvas.selected_nodes) || {}).filter(Boolean);
+    const cur = canvas && canvas.current_node;
+    if (cur && nodes.includes(cur)) return [cur, ...nodes.filter((n) => n !== cur)];
+    return nodes;
+}
+
+/** A tool node of this kind picked on the canvas, if the user has one selected. */
+function selectedToolNode(kind) {
+    const type = TOOL_NODE_TYPES[kind];
+    if (!type) return null;
+    return selectedGraphNodes().find((n) => n.type === type) || null;
+}
+
+/** Where a tool node created right now should hang from: the selection. */
+export function selectedImageSource() {
+    for (const n of selectedGraphNodes()) {
+        const src = imageSourceForNode(n, { strict: true });
+        if (src) return src;
+    }
+    return null;
+}
+
+/** A value that changes whenever the set of selected nodes does. */
+export function graphSelectionSignature() {
+    try {
+        return Object.keys((app.canvas && app.canvas.selected_nodes) || {}).sort().join(",");
+    } catch (e) { return ""; }
+}
+
+/** Whether this exact node is still in the graph (not deleted or replaced). */
+export function nodeInGraph(node) {
+    if (!node) return false;
+    try { return app.graph.getNodeById(node.id) === node; } catch (e) { return false; }
+}
+
+/** Whether `node`'s first input is wired to the node with this id. */
+function isFedBy(node, srcNodeId) {
+    const inp = ((node && node.inputs) || [])[0];
+    if (!inp || inp.link == null) return false;
+    const link = app.graph.links[inp.link];
+    return !!link && String(link.origin_id) === String(srcNodeId);
 }
 
 // An existing tool node of this kind already fed by `srcNodeId`, if any. Keeps
@@ -346,11 +411,7 @@ function findToolNodeFedBy(kind, srcNodeId) {
     const type = TOOL_NODE_TYPES[kind];
     const nodes = (app.graph && (app.graph._nodes || app.graph.nodes)) || [];
     for (const n of nodes) {
-        if (!n || n.type !== type) continue;
-        const inp = (n.inputs || [])[0];
-        if (!inp || inp.link == null) continue;
-        const link = app.graph.links[inp.link];
-        if (link && String(link.origin_id) === String(srcNodeId)) return n;
+        if (n && n.type === type && isFedBy(n, srcNodeId)) return n;
     }
     return null;
 }
@@ -372,28 +433,83 @@ function placeBeside(node, src) {
     node.pos = [x, y];
 }
 
-/** The tool node of `kind` that the given tab's drawing belongs to.
+/** The tool node of `kind` the selection names, directly or through the node it
+ * feeds — with no fallback to the tab and nothing created.
  *
- * Three outcomes, in order: the tab is already a tool tab of this kind; a tool
- * node of this kind is already wired to the tab's image; or — only when
- * `create` is set — a fresh one is added to the graph and connected.
+ * This is the question the selection watcher asks. ensureToolNode below answers
+ * a wider one, and the difference matters: clicking a KSampler has nothing to do
+ * with roto, so it must leave the tool where it is rather than send it back to
+ * whatever the tab holds, halfway through a shape. */
+export function toolNodeFromSelection(kind) {
+    const picked = selectedToolNode(kind);
+    if (picked) return picked;
+    const src = selectedImageSource();
+    return src ? findToolNodeFedBy(kind, src.node.id) : null;
+}
+
+/** The tool node of `kind` that the viewer's tool reads and writes.
  *
- * Creation is deliberately tied to the user pressing the tool button. Binding
- * happens on every tab switch too, and a viewer that quietly grew a node each
- * time you clicked through tabs would be a nasty surprise. */
+ * The canvas selection leads. Select a Roto node and the tool edits that node's
+ * shapes; select the node whose picture you want to matte and pressing the tool
+ * button hangs a fresh Roto node off it. Only with nothing useful selected does
+ * the tab decide — which is the case when you never touched the graph, or when
+ * the viewer is undocked and the graph is behind another window. The SAM3
+ * collector follows the same rule; the tools differ in what they store, not in
+ * which node they store it in.
+ *
+ * In order:
+ *   1. a tool node of this kind is selected              -> edit it
+ *   2. one is already fed by the selected node           -> edit that
+ *   3. `create` and a node is selected                   -> add one, hung off it
+ *   4. the tab came from a tool node of this kind        -> edit it
+ *   5. one is already fed by the tab's image             -> edit that
+ *   6. `create`                                          -> add one, hung off
+ *      the tab's image
+ *
+ * Steps 2 and 5 are what stop turning a tool on and off from reseeding the graph
+ * with duplicates. Creation stays tied to the button press: binding also runs on
+ * every tab switch and on every change of selection, and a viewer that quietly
+ * grew a node each time you clicked around the graph would be a nasty surprise.
+ *
+ * Step 3 sits above the tab on purpose, and only when creating. Pressing the
+ * button is a deliberate "put a tool on THAT node", so it acts on the selection
+ * and nothing else — where a passive rebind that found nothing would rather show
+ * the tab's own tool than an empty panel. */
 export function ensureToolNode(panel, tabKey, kind, { create = false } = {}) {
     const type = TOOL_NODE_TYPES[kind];
     if (!type) return null;
 
+    const picked = selectedToolNode(kind);
+    if (picked) return picked;
+
     const tabNode = resolveTabNode(panel, tabKey);
-    if (tabNode && tabNode.type === type) return tabNode;
+    const tabIsTool = !!(tabNode && tabNode.type === type);
 
-    const src = imageSourceForTab(panel, tabKey);
-    if (!src) return null;
+    const selSrc = selectedImageSource();
+    if (selSrc) {
+        // The tab's own node goes first among the nodes fed by the selection:
+        // with two Roto nodes hanging off one image, selecting that image must
+        // not swap you off the one you are looking at.
+        if (tabIsTool && isFedBy(tabNode, selSrc.node.id)) return tabNode;
+        const fed = findToolNodeFedBy(kind, selSrc.node.id);
+        if (fed) return fed;
+        if (create) return addToolNode(type, selSrc);
+    }
 
-    const existing = findToolNodeFedBy(kind, src.node.id);
-    if (existing || !create) return existing;
+    if (tabIsTool) return tabNode;
 
+    const tabSrc = imageSourceForTab(panel, tabKey);
+    if (tabSrc) {
+        const fed = findToolNodeFedBy(kind, tabSrc.node.id);
+        if (fed) return fed;
+        if (create) return addToolNode(type, tabSrc);
+    }
+
+    return null;
+}
+
+/** Add a tool node to the graph, wired to `src` and left selected. */
+function addToolNode(type, src) {
     const LG = window.LiteGraph;
     if (!LG || !LG.createNode) { console.warn("[bEpicViewer] LiteGraph unavailable"); return null; }
     const node = LG.createNode(type);
@@ -406,6 +522,11 @@ export function ensureToolNode(panel, tabKey, kind, { create = false } = {}) {
     } catch (e) {
         console.warn("[bEpicViewer] could not connect the new tool node", e);
     }
+    // Leave the new node selected. The rule is "the tool edits the node you have
+    // selected", so the one just created has to become that node — otherwise the
+    // next look at the selection would bind straight back to whatever was
+    // selected before, and the drawing would go somewhere the user cannot see.
+    try { app.canvas?.selectNode?.(node); } catch (e) {}
     app.graph.setDirtyCanvas?.(true, true);
     return node;
 }

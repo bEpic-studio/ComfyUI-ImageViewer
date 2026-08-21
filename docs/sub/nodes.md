@@ -41,16 +41,30 @@ Shaped to match ComfyUI-SAM3's own collectors, so they drop straight into a SAM3
 
 ---
 
-## Adding the tool nodes from the viewer
+## Which node a tool edits
 
-You do not have to lay these down by hand. The **Roto** and **SAM3** buttons in the viewer are always available: press one over a tab that isn't already a tool tab and the matching node is added to the graph and wired to the image that tab is showing. Press it again later and you get the same node back rather than a second one.
+**Whatever you have selected on the graph canvas.** Select a Roto node and the viewer's Roto tool reads and writes that node's shapes; select a SAM3 Collector and the SAM3 tools read and write its prompts. Select a different one and the tool moves with you — the panel names the node it is on, above the controls.
 
-Two details worth knowing:
+You do not have to lay these nodes down by hand. Select the node whose picture you want to work on and press the **Roto** or **SAM3** button: the matching node is added to the graph, wired to it, and left selected so the tool is already pointing at it. Press the button again and you get that same node back rather than a second one.
 
-- Doing this from a Roto tab wires the new node to the image feeding the Roto node, not to the Roto node itself — the tool nodes emit mattes and prompts, never pictures, so they can't be chained.
-- A tab no node in the graph feeds — an opened folder, a dropped file — has nothing to wire to, and the tool panel says so instead of offering the button.
+With nothing useful selected, the tab you are looking at decides — so the buttons still work when you have not touched the graph at all, or when the viewer is undocked and the graph is behind another window. In order, a tool binds to:
 
-The new node gets a viewer tab of its own the next time the workflow runs — or right away, if you right-click it and choose [Send to Image Viewer](other.md#send-to-image-viewer): a tool node sends the picture feeding it, straight into that same tab.
+1. a node of its kind that is selected;
+2. one already fed by the selected node;
+3. a new one hung off the selected node — button press only;
+4. the tab's own node, when the tab came from a node of that kind;
+5. one already fed by the tab's image;
+6. a new one hung off the tab's image — button press only.
+
+Nodes are only ever added by pressing the button. Switching tabs and changing the selection rebind the tool but never grow the graph.
+
+Three details worth knowing:
+
+- Adding a tool from a Roto or SAM3 node wires the new node to the image feeding *that* node, not to its output — the tool nodes emit mattes and prompts, never pictures, so they can't be chained.
+- Selecting something with no picture to offer — a checkpoint loader, a KSampler — is not about the tool at all: it stays where it is rather than snapping elsewhere mid-shape. So does clicking empty canvas. Deleting the node you are editing does move it.
+- With nothing selected and a tab no node in the graph feeds — an opened folder, a dropped file — there is nothing to wire to, and the tool panel says so instead of offering the button.
+
+A node added this way gets a viewer tab of its own the next time the workflow runs — or right away, if you right-click it and choose [Send to Image Viewer](other.md#send-to-image-viewer): a tool node sends the picture feeding it, straight into that same tab.
 
 ---
 

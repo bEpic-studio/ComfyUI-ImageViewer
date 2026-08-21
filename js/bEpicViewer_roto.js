@@ -180,6 +180,11 @@ export const RotoMixin = {
             return;
         }
 
+        // Which Roto node these shapes belong to. It is whichever one is
+        // selected on the canvas, so it is not always the tab's own.
+        const bound = this._toolBoundNodeRow?.();
+        if (bound) p.appendChild(bound);
+
         // Layer list
         this._rotoLayerList = el("div", "", "bepic-layer-list");
         p.appendChild(this._rotoLayerList);

@@ -12,10 +12,12 @@
 //   * Implement the SAM3 points tool end-to-end.
 //
 // Each tool writes into its own node type — Roto into bEpicImageViewerRoto,
-// both SAM3 tools into bEpicImageViewerSAM3Collector. Turning a tool on over a
-// tab that isn't one of those adds the node and wires it to the image the tab
-// is showing, so the toolbar works from any tab rather than only from tabs that
-// happen to come from the right kind of node.
+// both SAM3 tools into bEpicImageViewerSAM3Collector — and WHICH node of that
+// type follows the canvas selection: select a Roto node and the tool edits its
+// shapes, select the node whose picture you want to matte and pressing the tool
+// button hangs a fresh one off it. With nothing useful selected the tab decides,
+// so the toolbar still works from any tab. ensureToolNode in
+// bEpicViewer_nodeTools.js holds the full order of precedence.
 //
 // The Roto tool lives in bEpicViewer_roto.js and plugs into the hooks here
 // (_rotoActivate / _rotoDeactivate / _rotoRender / _rotoPointerDown / ...).
@@ -23,6 +25,10 @@
 import {
     ensureToolNode,
     imageSourceForTab,
+    selectedImageSource,
+    toolNodeFromSelection,
+    graphSelectionSignature,
+    nodeInGraph,
     readToolStore,
     writeToolStore,
     SAM3_POS_WIDGET,
@@ -130,6 +136,12 @@ export const ToolsMixin = {
                 };
             }
         } catch (e) {}
+
+        // Undocking is also what strands the selection poll's timer in a
+        // backgrounded window, and this is the hook that says the container has
+        // moved. Only restart a poll that is already running — an idle toolbar
+        // has nothing to watch.
+        if (this._toolSelTimer) this._toolWatchSelection();
     },
 
     _injectToolStyles() {
@@ -174,6 +186,16 @@ export const ToolsMixin = {
                 border-color:#a33; color:#fff; }
             .bepic-tool-hint { color:#888; font-size:11px; margin-top:6px;
                 line-height:1.35; }
+            /* Which node the tool is reading and writing — it follows the canvas
+               selection, so it has to be visible. */
+            .bepic-tool-node { display:flex; align-items:baseline; gap:5px;
+                margin:-2px 0 7px; padding-bottom:6px; font-size:11px;
+                border-bottom:1px solid #333; }
+            .bepic-tool-node .lbl { color:#f60; font-size:9px; letter-spacing:.5px;
+                text-transform:uppercase; flex:0 0 auto; }
+            .bepic-tool-node .nm { color:#ddd; flex:1; min-width:0; overflow:hidden;
+                text-overflow:ellipsis; white-space:nowrap; }
+            .bepic-tool-node .id { color:#666; flex:0 0 auto; }
             .bepic-tool-disabled { opacity:.45; }
             .bepic-layer-list { max-height:150px; overflow:auto; margin:4px 0;
                 border:1px solid #333; border-radius:4px; }
@@ -348,8 +370,10 @@ export const ToolsMixin = {
 
         // Pressing a tool button is the one moment we may add a node to the
         // graph: the user asked for this tool here, so give them somewhere to
-        // draw. Plain rebinds (tab switches) never create.
-        this._bindToolsToActiveTab({ create: tool !== "none" });
+        // draw. Plain rebinds (tab switches, selection changes) never create.
+        this._bindActiveTool({ create: tool !== "none" });
+        if (TOOL_NODE_KIND[tool]) this._toolWatchSelection();
+        else this._toolUnwatchSelection();
 
         // Panel content
         this._toolPanel.classList.toggle("show", tool !== "none");
@@ -378,7 +402,10 @@ export const ToolsMixin = {
     // already in there. Only the active tool is bound: the tools no longer share
     // one node, so there is nothing to load for the others until they're picked
     // — and picking one comes back through here.
-    _bindToolsToActiveTab(opts = {}) {
+    //
+    // Which node that is comes from ensureToolNode, which reads the canvas
+    // selection first and the active tab second.
+    _bindActiveTool(opts = {}) {
         const kind = TOOL_NODE_KIND[this._toolState.active] || null;
         const node = kind ? ensureToolNode(this, this.activeTab, kind, opts) : null;
         this._toolState.node = node;
@@ -410,31 +437,108 @@ export const ToolsMixin = {
         else if (t === "roto") this._rotoBuildPanel?.();
     },
 
-    // Panel body for a tool with nowhere to store its work. Where the tab has an
-    // image source we can wire to, that is one button away; where it hasn't
-    // (a folder or dropped-file tab, which no node in the graph feeds) say so
-    // plainly instead of offering a button that would do nothing.
+    // Panel body for a tool with nowhere to store its work. Where there is an
+    // image we can wire to — the selected node's, or failing that the tab's —
+    // that is one button away; where there isn't (a folder or dropped-file tab
+    // with nothing selected) say so plainly instead of offering a button that
+    // would do nothing.
     _toolMissingNodeBody(panel, tool) {
         const label = TOOL_NODE_LABEL[tool] || "tool";
-        const src = imageSourceForTab(this, this.activeTab);
+        const src = selectedImageSource() || imageSourceForTab(this, this.activeTab);
         if (!src) {
             panel.appendChild(elWith("div", {
                 className: "bepic-tool-hint",
-                textContent: `No node in the graph feeds this tab, so there is nothing to attach a ${label} node to. Switch to a tab a node produced.`,
+                textContent: `Nothing to attach a ${label} node to. Select the node whose image you want on the graph canvas, or switch to a tab a node produced.`,
             }));
             return;
         }
         const from = src.node.title || src.node.type || `node ${src.node.id}`;
         const add = elWith("button", { className: "bepic-act", textContent: `Add ${label} node` });
         add.onclick = () => {
-            this._bindToolsToActiveTab({ create: true });
+            this._bindActiveTool({ create: true });
             this._toolRefreshPanel();
         };
         panel.appendChild(add);
         panel.appendChild(elWith("div", {
             className: "bepic-tool-hint",
-            textContent: `Adds a ${label} node fed from "${from}" and edits that. It gets its own tab the next time the workflow runs.`,
+            textContent: `Adds a ${label} node fed from "${from}" and edits that. It gets its own tab the next time the workflow runs. To edit an existing ${label} node instead, select it on the graph canvas.`,
         }));
+    },
+
+    // A line naming the node the tool is bound to, for the top of its panel.
+    // Which node that is now depends on what is selected on the canvas, so
+    // saying it out loud is the difference between "my shapes vanished" and
+    // "I am editing a different node".
+    _toolBoundNodeRow() {
+        const node = this._toolState.node;
+        if (!node) return null;
+        const row = elWith("div", { className: "bepic-tool-node" });
+        row.innerHTML = `<span class="lbl">editing</span><span class="nm"></span><span class="id"></span>`;
+        // textContent, not innerHTML: a node title is the user's own string.
+        row.querySelector(".nm").textContent = node.title || node.type;
+        row.querySelector(".id").textContent = `#${node.id}`;
+        row.title = "The tool reads and writes this node. Select another one on the graph canvas to edit that instead.";
+        return row;
+    },
+
+    // ── canvas selection → the node the tool edits ───────────────────────────
+    // The tools follow what is selected on the graph canvas (see ensureToolNode),
+    // and litegraph offers no selection event that can be relied on across
+    // frontend versions — the parameters panel polls for the same reason. A
+    // timer rather than a rAF, though: a selection change is a human action, so
+    // a fifth of a second of latency on the rebind is invisible, where a
+    // per-frame poll would not be free.
+    //
+    // The timer comes from whichever window the viewer is in. Undocked, the
+    // ComfyUI tab that loaded this module is in the background, where timers are
+    // throttled to about once a second and rAF stops altogether.
+    _toolWatchSelection() {
+        this._toolUnwatchSelection();
+        const win = (this._viewerWindow && this._viewerWindow()) || window;
+        this._toolSelSig = this._toolSelectionSig();
+        this._toolSelWin = win;
+        this._toolSelTimer = win.setInterval(() => {
+            const sig = this._toolSelectionSig();
+            if (sig === this._toolSelSig) return;
+            this._toolSelSig = sig;
+            this._onGraphSelectionChanged();
+        }, 220);
+    },
+
+    _toolUnwatchSelection() {
+        if (this._toolSelTimer) {
+            try { (this._toolSelWin || window).clearInterval(this._toolSelTimer); } catch (e) {}
+        }
+        this._toolSelTimer = null;
+        this._toolSelWin = null;
+    },
+
+    // What is selected, plus whether the bound node is still there — deleting
+    // the node being edited has to rebind too, and that need not change the
+    // selection at all.
+    _toolSelectionSig() {
+        const bound = this._toolState && this._toolState.node;
+        const alive = bound ? (nodeInGraph(bound) ? bound.id : "gone") : "-";
+        return `${graphSelectionSignature()}|${alive}`;
+    },
+
+    _onGraphSelectionChanged() {
+        const kind = TOOL_NODE_KIND[this._toolState.active];
+        if (!kind) return;
+        const bound = this._toolState.node;
+        // Two things move the tool: a selection that names a node of this kind,
+        // and the node it is on being deleted. Anything else — a KSampler, empty
+        // canvas — is not about this tool and leaves it alone, because rebinding
+        // reloads the tool's state and would throw away a shape still being drawn.
+        const stale = !!bound && !nodeInGraph(bound);
+        if (!stale && !toolNodeFromSelection(kind)) return;
+        // Resolve first: where the tool actually lands is ensureToolNode's call,
+        // not the selection's alone, and if that is where it already is there is
+        // nothing to reload.
+        const next = ensureToolNode(this, this.activeTab, kind);   // never creates
+        if (next === bound) return;
+        this._bindActiveTool();
+        this._toolRefreshPanel();
     },
 
     _toolClearDraw() {
@@ -634,6 +738,9 @@ export const ToolsMixin = {
             this._toolMissingNodeBody(p, "sam3");
             return;
         }
+
+        const boundS = this._toolBoundNodeRow();
+        if (boundS) p.appendChild(boundS);
 
         this._sam3CountEl = elWith("div", { className: "bepic-tool-hint" });
         p.appendChild(this._sam3CountEl);
@@ -862,6 +969,9 @@ export const ToolsMixin = {
             this._toolMissingNodeBody(p, "sam3box");
             return;
         }
+
+        const boundB = this._toolBoundNodeRow();
+        if (boundB) p.appendChild(boundB);
 
         this._sam3boxCountEl = elWith("div", { className: "bepic-tool-hint" });
         p.appendChild(this._sam3boxCountEl);
