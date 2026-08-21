@@ -117,12 +117,6 @@ export const BrowserMixin = {
             });
         }
 
-        this.browserDockBtn = sr.getElementById("browser-dock-btn");
-        if (this.browserDockBtn) this.browserDockBtn.onclick = (e) => {
-            e.stopPropagation();
-            this.toggleBrowserSide();
-        };
-
         this.browserToggleBtn = sr.getElementById("browser-toggle-btn");
         if (this.browserToggleBtn) this.browserToggleBtn.onclick = () => this.toggleFileBrowser();
 

@@ -12,9 +12,10 @@ It opens on **ComfyUI's input folder**, which the server reports, so it is the r
 
 ### The panel
 
+The title bar across the top moves the panel — see [Docking Panels](interface.md#docking-panels). Below it:
+
 | Part | What it does |
 |---|---|
-| **Switch Side** | Send the panel to the rail on the other side. Dragging the header does the same thing with more control — see [Docking Panels](interface.md#docking-panels). |
 | **↑** | Up one folder. <kbd>Backspace</kbd> does the same while the list has focus. |
 | **Go to…** | Jump to Input, Output, Temp, your home folder, or any drive. |
 | **⟳** | Re-read the folder — pick up files written since you last looked. |

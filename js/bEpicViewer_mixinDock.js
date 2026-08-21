@@ -145,6 +145,7 @@ export const DockMixin = {
         this.paramsSide  = this._dockSideOf("params")  || this.paramsSide  || "right";
         this.browserSide = this._dockSideOf("browser") || this.browserSide || "right";
         this._syncDockIcons();
+        this._syncPanelToggleButtons();
 
         // Compare geometry and the frame outline are measured against the
         // viewport, which has just changed width.
@@ -253,6 +254,21 @@ export const DockMixin = {
         this.dockPanelTo(id, side === "left" ? "right" : "left", null);
     },
 
+    /** The toolbar's three toggles, lit from the dock rather than each other. */
+    _syncPanelToggleButtons() {
+        if (this.historyToggleBtn) {
+            this.historyToggleBtn.classList.toggle("active", this.isPanelDocked("history"));
+        }
+        if (this.browserToggleBtn) {
+            this.browserToggleBtn.classList.toggle("active", this.isPanelDocked("browser"));
+        }
+        if (this.paramsBtn) {
+            const open = this.isPanelDocked("params");
+            this.paramsBtn.style.color = open ? "#f60" : "#eee";
+            this.paramsBtn.classList.toggle("active", open);
+        }
+    },
+
     _syncDockIcons() {
         if (!this._setIcon) return;
         const btns = { history: this.historyDockBtn, browser: this.browserDockBtn, params: this.paramsDockBtn };
@@ -348,16 +364,57 @@ export const DockMixin = {
 
     // ── Drag a panel by its header to re-dock it ─────────────────────────────
 
-    _bindDockDrag() {
-        for (const id of Object.keys(DOCK_PANELS)) {
-            const el = this._dockPanelEl(id);
-            if (!el) continue;
-            const header = el.querySelector(".params-header, .browser-header, .history-header");
-            if (!header || header._dockBound) continue;
-            header._dockBound = true;
-            header.classList.add("dock-grab");
-            header.addEventListener("pointerdown", (e) => this._onDockHeaderDown(id, header, e));
+    /**
+     * Give a panel its title bar, once.
+     *
+     * Built here rather than written into the markup three times: the bar is
+     * the same for every panel and the dock already knows their names. It is
+     * also the drag handle — the content headers below it carry real controls
+     * (a node title, a folder path, buttons), so grabbing one to move a panel
+     * always felt like grabbing the wrong thing.
+     */
+    _ensurePanelTitlebar(id) {
+        const el = this._dockPanelEl(id);
+        if (!el) return null;
+        let bar = el.querySelector(":scope > .panel-titlebar");
+        if (!bar) {
+            const doc = el.ownerDocument;
+            bar = doc.createElement("div");
+            bar.className = "panel-titlebar";
+
+            const grip = doc.createElement("span");
+            grip.className = "pt-grip";
+            const name = doc.createElement("span");
+            name.className = "pt-name";
+            name.textContent = DOCK_PANELS[id].label;
+            const side = doc.createElement("button");
+            side.className = "pt-btn";
+            side.id = `${id}-dock-btn`;
+            side.title = "Switch Side";
+            const hide = doc.createElement("button");
+            hide.className = "pt-btn pt-close";
+            hide.id = `${id}-hide-btn`;
+            hide.title = "Hide this panel";
+            hide.textContent = "\u2715";
+
+            bar.append(grip, name, side, hide);
+            el.insertBefore(bar, el.firstChild);
+
+            side.addEventListener("pointerdown", (e) => e.stopPropagation());
+            hide.addEventListener("pointerdown", (e) => e.stopPropagation());
+            side.addEventListener("click", (e) => { e.stopPropagation(); this.togglePanelSide(id); });
+            hide.addEventListener("click", (e) => { e.stopPropagation(); this.setPanelDocked(id, false); });
+
+            bar.addEventListener("pointerdown", (e) => this._onDockHeaderDown(id, bar, e));
         }
+        // The dock owns these references now; they used to point at buttons
+        // sitting inside each panel's own header.
+        this[`${id}DockBtn`] = bar.querySelector(`#${id}-dock-btn`);
+        return bar;
+    },
+
+    _bindDockDrag() {
+        for (const id of Object.keys(DOCK_PANELS)) this._ensurePanelTitlebar(id);
     },
 
     _onDockHeaderDown(id, header, e) {
@@ -387,7 +444,11 @@ export const DockMixin = {
     _beginDockDrag(id) {
         this._dockDragId = id;
         const el = this._dockPanelEl(id);
-        if (el) el.classList.add("dock-dragging");
+        if (el) {
+            el.classList.add("dock-dragging");
+            const bar = el.querySelector(":scope > .panel-titlebar");
+            if (bar) bar.classList.add("dragging");
+        }
         if (!this.dockOverlay) return;
 
         const doc = this.dockOverlay.ownerDocument;
@@ -433,7 +494,11 @@ export const DockMixin = {
 
     _endDockDrag(id) {
         const el = this._dockPanelEl(id);
-        if (el) el.classList.remove("dock-dragging");
+        if (el) {
+            el.classList.remove("dock-dragging");
+            const bar = el.querySelector(":scope > .panel-titlebar");
+            if (bar) bar.classList.remove("dragging");
+        }
         if (this.dockOverlay) {
             this.dockOverlay.classList.remove("active");
             this.dockOverlay.innerHTML = "";

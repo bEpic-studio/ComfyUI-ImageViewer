@@ -13,14 +13,10 @@
         <div id="dock-left" class="dock-rail" data-rail="left"></div>
         <div id="rail-splitter-left" class="rail-splitter" data-rail="left" title="Resize"></div>
         <div id="history-panel" class="history-panel">
-            <div class="history-header">
-                <button id="history-dock-btn" class="sprite-icon" title="Switch Side"></button>
-                <span class="history-title">History</span>
-            </div>
             <div id="history-strip" class="history-strip"></div>
-                <div style="display:flex; gap:6px; padding:6px; justify-content: center;">
-                    <button id="history-clear-btn" class="history-clear sprite-icon" title="Clear History"></button>
-                </div>
+            <div class="history-footer">
+                <button id="history-clear-btn" class="history-clear sprite-icon" title="Clear History"></button>
+            </div>
         </div>
         <div class="viewport" id="viewport">
             <div id="shape-overlay">Shape: [?, ?, ?, ?]</div>
@@ -63,7 +59,6 @@
         <div id="dock-overlay" class="dock-overlay"></div>
         <div id="browser-panel" class="browser-panel right">
             <div class="browser-header">
-                <button id="browser-dock-btn" class="sprite-icon" title="Switch Side"></button>
                 <button id="browser-up-btn" class="browser-btn" title="Parent folder (Backspace)">&#8593;</button>
                 <select id="browser-root-sel" title="Jump to a folder"><option value="">Go to&#8230;</option></select>
                 <button id="browser-refresh-btn" class="browser-btn" title="Re-read this folder">&#10227;</button>
@@ -84,7 +79,6 @@
         </div>
         <div id="params-panel" class="params-panel right">
             <div class="params-header">
-                <button id="params-dock-btn" class="sprite-icon" title="Switch Side"></button>
                 <span id="params-title">No Node Selected</span>
                 <button id="params-lock-btn" class="sprite-icon" title="Lock – freeze to currently selected node"></button>
             </div>
@@ -102,7 +96,7 @@
         <div><b>Ctrl-left drag on Timeline</b>  Select playback range</div>
         <div><b>Shift-drag off the Timeline</b>  Pull the frame on screen onto the graph as a Load Image node (a video frame is extracted to a PNG beside the clip)</div>
         <div><b>Drag from the File Browser</b>  onto the viewport to open it here, or onto the graph for a loader node</div>
-        <div><b>Drag a panel by its header</b>  to either side of the picture, or onto another panel to stack it (Esc cancels)</div>
+        <div><b>Drag a panel by its title bar</b>  to either side of the picture, or onto another panel to stack it (Esc cancels)</div>
         <div id="help-roto" style="display:none; margin-top:14px; border-top:1px solid #333; padding-top:10px;">
             <h3 style="color:#f60;">Roto Tool</h3>
             <div><b>The matte lives on a node:</b> turning this on over any other tab adds a <i>bEpic Image Viewer Roto</i> node wired to the image you are looking at, and draws into that</div>

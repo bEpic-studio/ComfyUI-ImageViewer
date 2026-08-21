@@ -8,6 +8,9 @@
 
 ![tabs](../screenshots/screenshot_03.png)
 
+> [!NOTE]
+> History thumbnails size themselves to the panel. Widen the rail and they grow with it; widen it far enough and they wrap into a grid of two, three or more across rather than becoming one enormous column. Drag the panel by its title bar to put it wherever suits — see [Docking Panels](interface.md#docking-panels).
+
 Every image source gets its own tab. Tabs are created automatically when:
 
 - A **bEpic Send To Image Viewer** node runs — the tab name is set by the node's `tab_name` field (defaults to the node's unique ID if left blank).

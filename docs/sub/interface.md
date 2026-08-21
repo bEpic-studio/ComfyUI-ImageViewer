@@ -82,13 +82,19 @@ The bottom bar contains (left to right):
 
 The history strip, the file browser and the parameters panel all live in one of two **rails**, left and right of the picture. A rail is a vertical stack, so panels can sit side by side *or* above one another.
 
-**Drag a panel by its header** to move it:
+Every panel wears a slim **title bar** across its top — a grip, the panel's name, and two buttons:
+
+| Control | What it does |
+|---|---|
+| The bar itself | Drag it to move the panel. This is the handle for everything below. |
+| **⇤ / ⇥** | Send the panel straight to the rail on the other side. |
+| **✕** | Put the panel away. It keeps its slot, so showing it again brings it back where it was. |
+
+**Drag a panel by its title bar** to move it:
 
 - Drop it on the **left or right edge of the picture** to send it to that rail.
 - Drop it on the **top or bottom half of another panel** to place it above or below that one, in the same rail.
 - Drop it in the **middle of the picture** — or press <kbd>Esc</kbd> — to cancel. An outline shows exactly where it will land before you let go.
-
-Each header also carries a **Switch Side** button, which is the one-click version of dragging it to the other rail.
 
 **Resizing:**
 

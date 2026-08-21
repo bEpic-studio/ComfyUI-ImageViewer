@@ -23,7 +23,7 @@ bEpic ImageViewer is a custom node extension for [ComfyUI](https://github.com/co
 | **File Browser** | Browse the disk in a panel, preview images and video, drag files into the viewer or onto the graph. |
 | **Send from Any Node** | Right-click a VHS / native / AYON loader → *Send to Image Viewer*, or any image-producing node to run just its branch. |
 | **Frame to Graph** | Shift-drag the timeline onto the graph for a Load Image node holding the frame on screen — a video frame is extracted to a PNG beside the clip. |
-| **Dockable Panels** | Drag any panel by its header to either side of the picture, or stack it above another. Splitters between them, arrangement remembered. |
+| **Dockable Panels** | Drag any panel by its title bar to either side of the picture, or stack it above another. Splitters between them, arrangement remembered. |
 | **Undock / Multi-Monitor** | Pop the viewer into its own browser window for a second screen. |
 
 ## How It Works

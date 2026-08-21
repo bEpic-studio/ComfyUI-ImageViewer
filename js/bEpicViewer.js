@@ -123,9 +123,6 @@ const ICON_MAP = {
     'clear-cache-btn':   'icon-delete',
     'history-clear-btn': 'icon-delete',
     'help-btn':          'icon-help',
-    'params-dock-btn':   'icon-dock-right',
-    'browser-dock-btn':  'icon-dock-right',
-    'history-dock-btn':  'icon-dock-right',
     'params-lock-btn':   'icon-unlock',
 };
 
@@ -500,7 +497,6 @@ class ViewerPanel extends HTMLElement {
             this.paramsPanel.className    = "params-panel right";
             this.paramsPanel.innerHTML    = `
                 <div class="params-header">
-                    <button id="params-dock-btn" title="Switch Side"></button>
                     <span id="params-title">No Node Selected</span>
                     <button id="params-lock-btn" title="Lock  freeze to currently selected node"></button>
                 </div>
@@ -515,10 +511,6 @@ class ViewerPanel extends HTMLElement {
         }
         const pq = (id) => this.paramsPanel.querySelector(`#${id}`);
         const header = this.paramsPanel.querySelector('.params-header');
-        if (header && !header.querySelector('#params-dock-btn')) {
-            const b = document.createElement('button'); b.id = 'params-dock-btn'; b.title = 'Switch Side'; b.innerText = '';
-            header.insertBefore(b, header.firstChild);
-        }
         if (header && !header.querySelector('#params-lock-btn')) {
             const b = document.createElement('button'); b.id = 'params-lock-btn'; b.title = 'Lock  freeze to currently selected node'; b.textContent = '';
             header.appendChild(b);
@@ -526,7 +518,7 @@ class ViewerPanel extends HTMLElement {
 
         this.paramsContent  = sr.getElementById('params-content')  || pq('params-content');
         this.paramsTitle    = sr.getElementById('params-title')     || pq('params-title');
-        this.paramsDockBtn  = sr.getElementById('params-dock-btn')  || pq('params-dock-btn');
+        // paramsDockBtn is created with the title bar (mixinDock).
         this.paramsLockBtn  = sr.getElementById('params-lock-btn')  || pq('params-lock-btn');
 
         this.paramsBtn = sr.getElementById('params-btn');
@@ -543,10 +535,6 @@ class ViewerPanel extends HTMLElement {
         this.paramsPanel.style.display = "none";
         this.paramsBtn.style.color     = "#eee";
 
-        if (this.paramsDockBtn) this.paramsDockBtn.onclick = (e) => {
-            e.stopPropagation();
-            this.toggleParamsSide();
-        };
         if (this.paramsLockBtn) this.paramsLockBtn.onclick = () => {
             this.toggleParamsLock();
             this.paramsLockBtn.classList.toggle('locked', this.paramsLocked);
@@ -572,17 +560,13 @@ class ViewerPanel extends HTMLElement {
         // Placement is the dock mixin's business now — see applyDockLayout.
         if (this.historyPanel) this.historyPanel.style.display = 'none';
 
-        this.historyDockBtn = sr.getElementById('history-dock-btn');
-        if (this.historyDockBtn) this.historyDockBtn.onclick = (e) => {
-            e.stopPropagation();
-            this.togglePanelSide('history');
-        };
-
         if (this.historyClearBtn) {
             this.historyClearBtn.disabled = true;
+            // Sits in the flow at the foot of the panel. It used to be pinned
+            // over the top of the strip with the panel reserving 48px of padding
+            // for it, which the title bar now occupies.
             Object.assign(this.historyClearBtn.style, {
-                position: 'absolute', top: '6px', left: '6px', right: '6px',
-                width: 'calc(100% - 12px)', zIndex: '20',
+                width: '100%',
                 background: 'rgba(30,30,30,0.9)', color: '#fff', border: '1px solid #444',
                 padding: '6px', textAlign: 'center', cursor: 'pointer',
             });

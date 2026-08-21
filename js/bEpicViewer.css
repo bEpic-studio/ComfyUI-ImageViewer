@@ -451,11 +451,6 @@ textarea.param-input {
     min-height: 60px;
     overflow: auto;
 }
-#params-dock-btn {
-    background: transparent; border: none; color: #888; cursor: pointer;
-    font-size: 14px; padding: 0 4px; margin-right: 5px;
-}
-#params-dock-btn:hover { color: #fff; }
 #params-lock-btn {
     background: transparent; border: none; color: #888; cursor: pointer;
     font-size: 14px; padding: 0 4px; margin-left: auto; flex-shrink: 0;
@@ -484,24 +479,32 @@ textarea.param-input {
     width: 80px;
     background: linear-gradient(180deg,#0d0d0d,#0b0b0b);
     display: flex; flex-direction: column;
-    box-sizing: border-box; padding-top: 48px;
+    box-sizing: border-box;
     border-radius: 6px;
     border-left: 1px solid #222; border-right: 1px solid #222;
 }
-.history-header {
-    color: #aaa; font-size: 11px; padding: 4px 4px; border-bottom: 1px solid #222;
-    display: flex; align-items: center; gap: 2px;
+
+/* Thumbnails take their size from the pane rather than a fixed 72x52.
+   `minmax(min(100%, 88px), 1fr)` is the idiom that makes auto-fill behave in a
+   narrow container: the track floor collapses to the container width instead of
+   overflowing it. So one column that grows with the rail, and a second, third
+   ... once there is genuinely room for them. */
+.history-strip {
+    padding: 8px 6px 10px 6px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 88px), 1fr));
+    gap: 8px;
+    align-content: start;
+    overflow-y: auto; overflow-x: hidden;
+    flex: 1; min-height: 0;
 }
-.history-header .history-title { flex: 1; min-width: 0; text-align: center; overflow: hidden; }
-#history-dock-btn {
-    background: transparent; border: none; color: #888; cursor: pointer;
-    min-width: 18px; min-height: 18px; height: 18px; padding: 0;
+.history-thumb {
+    position: relative; width: auto; aspect-ratio: 4 / 3; min-width: 0;
+    background: #050505; border-radius: 6px; overflow: hidden;
+    border: 1px solid #1a1a1a; display: flex; align-items: center;
+    justify-content: center; cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
 }
-#history-dock-btn:hover { color: #fff; }
-#history-dock-btn > svg { width: 13px; height: 13px; }
-.history-strip { padding: 6px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; align-items: center; }
-.history-strip { padding: 8px 6px 10px 6px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; align-items: center; flex: 1; min-height: 0; }
-.history-thumb { position: relative; width: 72px; height: 52px; flex-shrink: 0; background: #050505; border-radius: 6px; overflow: hidden; border: 1px solid #1a1a1a; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02); }
 .history-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .history-thumb:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.6), 0 0 0 2px rgba(255,102,0,0.08); transform: translateY(-2px); }
 .history-thumb.selected { box-shadow: 0 0 0 2px rgba(255,102,0,0.9); }
@@ -551,6 +554,35 @@ textarea.param-input {
 .rail-splitter:hover, .rail-splitter.dragging,
 .stack-splitter:hover, .stack-splitter.dragging { background: rgba(255,102,0,0.30); }
 
+/* Every dockable panel wears one of these: the handle you grab to move it, and
+   the two things you do to it without moving it. Built by _ensurePanelTitlebar
+   rather than written into the markup three times. */
+.panel-titlebar {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 4px;
+    height: 18px; padding: 0 4px; box-sizing: border-box;
+    background: #141414; border-bottom: 1px solid #262626;
+    font-size: 10px; color: #999;
+    cursor: grab; user-select: none;
+}
+.panel-titlebar.dragging, .panel-titlebar:active { cursor: grabbing; }
+.panel-titlebar:hover { background: #191919; color: #ccc; }
+.pt-grip {
+    flex: 0 0 auto; width: 9px; height: 9px;
+    background-image: radial-gradient(currentColor 1px, transparent 1px);
+    background-size: 3px 3px; opacity: 0.5;
+}
+.pt-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* min-height, because the blanket `button` rule sets 32px and that beats height. */
+.pt-btn {
+    flex: 0 0 auto; background: transparent; border: none; color: #888;
+    min-width: 14px; min-height: 14px; height: 14px; padding: 0;
+    cursor: pointer; font-size: 10px; line-height: 1; border-radius: 2px;
+}
+.pt-btn:hover { color: #fff; background: rgba(255,255,255,0.08); }
+.pt-btn > svg { width: 12px; height: 12px; }
+.pt-close:hover { color: #fff; background: rgba(229,72,77,0.75); }
+
 /* Drag-to-dock: a preview of where the panel would land, and a label under the
    cursor. Lives inside .main-area, so it travels with the panel when the whole
    viewer is popped out into another window. */
@@ -586,15 +618,6 @@ textarea.param-input {
     padding: 6px; background: #111; border-bottom: 1px solid #333;
     height: 30px; box-sizing: border-box;
 }
-#browser-dock-btn {
-    background: transparent; border: none; color: #888; cursor: pointer;
-    /* min-height is what actually decides this: the blanket `button` rule sets
-       32px, which beats any height and is why the params panel's own dock
-       button overflows its 30px header. Overridden here so this one fits. */
-    min-width: 20px; min-height: 20px; height: 20px; padding: 0; margin-right: 2px;
-}
-#browser-dock-btn:hover { color: #fff; }
-#browser-dock-btn > svg { width: 14px; height: 14px; }
 .browser-btn {
     background: #1a1a1a; color: #ccc; border: 1px solid #333; border-radius: 4px;
     width: 24px; height: 20px; line-height: 1; font-size: 12px; cursor: pointer; padding: 0;
@@ -677,6 +700,7 @@ textarea.param-input {
 .thumb-ctx-item:hover { background: rgba(255,102,0,0.18); color: #fff; }
 .history-restore { margin: 6px; padding: 6px; background: #222; color: #eee; border: 1px solid #333; font-size: 11px; }
 .history-restore:hover { border-color: #f60; color: #f60; }
+.history-footer { flex: 0 0 auto; display: flex; gap: 6px; padding: 6px; justify-content: center; }
 .history-clear { margin: 0; padding: 8px 10px; background: rgba(30,30,30,0.85); color: #fff; border: 1px solid rgba(255,255,255,0.03); font-size: 12px; border-radius: 6px; box-shadow: 0 2px 6px rgba(0,0,0,0.6); text-align: center; }
 .history-clear:hover { border-color: rgba(255,255,255,0.06); color: #fff; background: rgba(255,102,0,0.95); }
 
