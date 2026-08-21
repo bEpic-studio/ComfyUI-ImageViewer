@@ -143,6 +143,40 @@ def _to_frames(tensor):
 
 # ── image writing (OpenImageIO, PIL fallback) ────────────────────────────────
 
+def _metadata_disabled():
+    """True when ComfyUI was started with --disable-metadata.
+
+    The standard save nodes read the same flag; a user who turned workflow
+    metadata off server-wide does not expect this node to be the exception."""
+    try:
+        from comfy.cli_args import args
+        return bool(getattr(args, "disable_metadata", False))
+    except Exception:
+        return False
+
+
+def _pnginfo(prompt, extra_pnginfo):
+    """ComfyUI's workflow metadata as PNG text chunks, or None.
+
+    The same chunks SaveImage writes -- "prompt", plus every key of
+    EXTRA_PNGINFO (which is where "workflow" lives) -- so a PNG this node saved
+    can be dragged back into ComfyUI to rebuild the graph it came from. None
+    when there is nothing to embed or metadata is switched off, which is also
+    what PIL wants for "write no text chunks"."""
+    if _metadata_disabled():
+        return None
+    if prompt is None and not isinstance(extra_pnginfo, dict):
+        return None
+    from PIL.PngImagePlugin import PngInfo
+    meta = PngInfo()
+    if prompt is not None:
+        meta.add_text("prompt", json.dumps(prompt))
+    if isinstance(extra_pnginfo, dict):
+        for key, value in extra_pnginfo.items():
+            meta.add_text(key, json.dumps(value))
+    return meta
+
+
 def _oiio_type(oiio, ext):
     """Pick a sensible bit depth per format (half for EXR/HDR, 16-bit for
     dpx/tiff, else 8-bit)."""
@@ -174,16 +208,33 @@ def _write_image_oiio(frame, path, ext):
     out.close()
 
 
-def _write_image_pil(frame, path, ext):
+def _write_image_pil(frame, path, ext, pnginfo=None):
     from PIL import Image
     u8 = np.clip(frame * 255.0, 0, 255).astype(np.uint8)
     if ext in ("jpg", "jpeg") and u8.shape[-1] == 4:
         u8 = u8[:, :, :3]                        # jpeg has no alpha
     mode = "RGBA" if u8.shape[-1] == 4 else "RGB"
-    Image.fromarray(u8, mode).save(path)
+    # Only PNG has anywhere to put it; every other encoder here would be handed
+    # a keyword it has no use for.
+    extra = {"pnginfo": pnginfo} if pnginfo is not None else {}
+    Image.fromarray(u8, mode).save(path, **extra)
 
 
-def _write_image(frame, path, ext):
+def _write_image(frame, path, ext, prompt=None, extra_pnginfo=None):
+    # PNG is the one still format here that can carry ComfyUI's workflow, and
+    # PIL is what writes those text chunks -- so a PNG with metadata to embed
+    # goes to PIL even where OpenImageIO is installed. Nothing meaningful is
+    # lost: _oiio_type maps png to UINT8, so both writers produce the same 8-bit
+    # file, alpha included. The two differ only in how they quantise -- PIL
+    # truncates where OIIO rounds, so a saved PNG can sit one 255th below the
+    # same frame written before this, which is also exactly what ComfyUI's own
+    # SaveImage writes.
+    if ext == "png":
+        meta = _pnginfo(prompt, extra_pnginfo)
+        if meta is not None:
+            _write_image_pil(frame, path, ext, meta)
+            return
+
     try:
         import OpenImageIO  # noqa: F401
         _write_image_oiio(frame, path, ext)
@@ -251,17 +302,14 @@ def _thumb_from_frame(frame01, tag):
 def _write_workflow_png(frame01, png_path, prompt, extra_pnginfo):
     """Write a PNG of a single [H,W,C] float frame with ComfyUI's workflow/prompt
     embedded in PNG text chunks (the same metadata SaveImage writes), so the file
-    can be dragged back into ComfyUI to restore the graph. Returns the path."""
+    can be dragged back into ComfyUI to restore the graph. Returns the path.
+
+    Still written when there is no metadata to carry: it doubles as the video's
+    history thumbnail, which an <img> needs and the container cannot provide."""
     from PIL import Image
-    from PIL.PngImagePlugin import PngInfo
-    meta = PngInfo()
-    if prompt is not None:
-        meta.add_text("prompt", json.dumps(prompt))
-    if isinstance(extra_pnginfo, dict):
-        for key, value in extra_pnginfo.items():
-            meta.add_text(key, json.dumps(value))
     u8 = np.clip(frame01[:, :, :3] * 255.0, 0, 255).astype(np.uint8)
-    Image.fromarray(u8, "RGB").save(png_path, pnginfo=meta, compress_level=4)
+    Image.fromarray(u8, "RGB").save(png_path, pnginfo=_pnginfo(prompt, extra_pnginfo),
+                                    compress_level=4)
     return png_path
 
 
@@ -492,8 +540,12 @@ def write_output(tensor, filename_prefix, file_format, fps,
     Returns (saved_paths, viewer_frames): `saved_paths` are the files written to
     ./output; `viewer_frames` are frame dicts for the viewer to display — the
     saved files themselves for video and browser-friendly images, or temp PNG
-    proxies for formats a browser can't render (exr / tiff / dpx / ...). Video
-    outputs also get a same-named companion PNG carrying the ComfyUI workflow."""
+    proxies for formats a browser can't render (exr / tiff / dpx / ...).
+
+    Saved PNGs carry the ComfyUI workflow in their text chunks, the way SaveImage
+    writes it, so they can be dragged back in to rebuild the graph. Video outputs
+    get the same thing in a same-named companion PNG, since no video container
+    here can hold it."""
     if tensor is None:
         return [], []
     if folder_paths is None:
@@ -534,7 +586,7 @@ def write_output(tensor, filename_prefix, file_format, fps,
         for i in range(n):
             file = f"{filename}_{counter:05}_.{ext}"
             path = os.path.join(full_folder, file)
-            _write_image(frames[i], path, ext)
+            _write_image(frames[i], path, ext, prompt, extra_pnginfo)
             saved.append(path)
             counter += 1
         print(f"[bEpicSendToViewer] wrote {n} {ext} file(s) to {full_folder}")
