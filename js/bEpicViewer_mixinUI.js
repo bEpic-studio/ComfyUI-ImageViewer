@@ -1182,8 +1182,26 @@ export const UIMixin = {
         const fitScale = Math.min(elW / nat.w, elH / nat.h);
         const drawW = Math.max(1, nat.w * fitScale);
         const drawH = Math.max(1, nat.h * fitScale);
-        const left = (elW - drawW) * 0.5;
-        const top = (elH - drawH) * 0.5;
+        // Where the layer ITSELF sits, plus where the picture sits inside it. Both
+        // terms are needed because the two layer kinds letterbox in different
+        // places, and only one of them was being accounted for.
+        //
+        // The <img> is laid out at 100% x 100% of the container, so it starts at
+        // the origin (offsetLeft/Top 0) and the picture is letterboxed INSIDE it —
+        // the second term does all the work. The <video> resolves the same
+        // `.img-layer` rules to `width:auto; height:auto; margin:auto` (init()
+        // appends that override), so it shrink-wraps to the picture and centres
+        // ITSELF: its box already IS the picture, the second term is 0, and the
+        // whole offset lives in the first. Reading only the second put the outline
+        // at the container's top edge for every clip — measured 50px high on a
+        // 1280x704 clip in an 888x589 panel, right size, wrong place.
+        //
+        // offsetLeft/Top are untransformed and measured from #contact-container,
+        // which is inset 0,0 within #img-frame's own offset parent (.viewport).
+        // Contact mode is the one layout where that is not true, and CSS hides the
+        // outline there.
+        const left = el.offsetLeft + (elW - drawW) * 0.5;
+        const top = el.offsetTop + (elH - drawH) * 0.5;
 
         this.imgFrame.style.left = `${left}px`;
         this.imgFrame.style.top = `${top}px`;
