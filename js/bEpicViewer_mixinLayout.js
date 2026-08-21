@@ -295,21 +295,8 @@ export const LayoutMixin = {
                        (data.browser && data.browser.previewHeight) || null;
             if (ph && this._setBrowserPreviewHeight) this._setBrowserPreviewHeight(ph);
 
-            if (this.paramsBtn) {
-                const open = this.isPanelDocked && this.isPanelDocked('params');
-                this.paramsBtn.style.color = open ? '#f60' : '#eee';
-                this.paramsBtn.classList.toggle('active', !!open);
-                if (open && this.updateParamsPanel) this.updateParamsPanel(true);
-            }
-            if (this.isPanelDocked && this.isPanelDocked('history')) {
-                this._historyPanelSig = null;
-                this.renderHistoryPanel();
-            }
-            if (this._syncHistoryToggleState) this._syncHistoryToggleState();
-            if (this._syncBrowserToggleState) this._syncBrowserToggleState();
-            if (this.isFileBrowserOpen && this.isFileBrowserOpen() && !this._browserLoaded) {
-                this.browseTo(this._browserDir, { force: true });
-            }
+            // Toggle lights and waking each panel up are both applyDockLayout's
+            // to do — see _syncPanelToggleButtons and _onPanelShown.
         } catch (e) {
             console.warn('Could not restore panel states from layout data', e);
         }

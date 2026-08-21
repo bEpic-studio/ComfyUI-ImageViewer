@@ -145,6 +145,7 @@ export const DockMixin = {
         this.paramsSide  = this._dockSideOf("params")  || this.paramsSide  || "right";
         this.browserSide = this._dockSideOf("browser") || this.browserSide || "right";
         this._syncPanelToggleButtons();
+        this._notifyPanelsShown();
 
         // Compare geometry and the frame outline are measured against the
         // viewport, which has just changed width.
@@ -244,6 +245,47 @@ export const DockMixin = {
 
         this.applyDockLayout();
         this.queuePersistViewerState && this.queuePersistViewerState();
+    },
+
+    /**
+     * Wake up any panel that has just come into view.
+     *
+     * A panel becomes visible by several routes — its toolbar toggle, a
+     * restored layout, the session state reloading, a drag that lands it
+     * somewhere — and each of them used to have to remember to fill the panel
+     * in. Restoring the session did not, so leaving the file browser open and
+     * reloading gave you the panel with an empty path bar and no listing: it
+     * looked broken when it had simply never been told to fetch.
+     *
+     * Every one of those routes ends in applyDockLayout, so the notice belongs
+     * here and the callers can forget about it.
+     */
+    _notifyPanelsShown() {
+        const before = this._dockShown || new Set();
+        const now = new Set();
+        for (const side of RAIL_SIDES) {
+            for (const p of this.dockLayout[side].panels) if (!p.hidden) now.add(p.id);
+        }
+        this._dockShown = now;
+        for (const id of now) {
+            if (before.has(id)) continue;
+            try { this._onPanelShown(id); }
+            catch (e) { console.warn(`bEpicViewer: ${id} panel failed to wake up`, e); }
+        }
+    },
+
+    _onPanelShown(id) {
+        if (id === "browser") {
+            // First time up, go and read a folder; after that the listing it
+            // already holds is still good.
+            if (!this._browserLoaded) this.browseTo(this._browserDir, { force: true });
+            else this._renderBrowserList();
+        } else if (id === "history") {
+            this._historyPanelSig = null;
+            if (this.renderHistoryPanel) this.renderHistoryPanel();
+        } else if (id === "params") {
+            if (this.updateParamsPanel) this.updateParamsPanel(true);
+        }
     },
 
     /** The toolbar's three toggles, lit from the dock rather than each other. */

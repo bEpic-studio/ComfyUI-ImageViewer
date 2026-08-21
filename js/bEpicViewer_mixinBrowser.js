@@ -58,6 +58,11 @@ export const BrowserMixin = {
         this._browserLoaded = false;
         this._browserDir    = this._browserDir || this._savedBrowserDir();
 
+        // Fill the path field straight away rather than leaving it blank until
+        // the first listing lands — an empty address bar reads as "broken", and
+        // it is the first thing you look at.
+        this._showBrowserPath(this._browserDir);
+
         this._bindBrowserControls();
         this._setupBrowserResizing();
         this._setBrowserPreviewHeight(this._browserPreviewH || _PREVIEW_DEFAULT);
@@ -122,11 +127,9 @@ export const BrowserMixin = {
     toggleFileBrowser(force) {
         if (!this.browserPanel) return;
         const next = (force === undefined) ? !this.isFileBrowserOpen() : !!force;
+        // Filling the panel in is _onPanelShown's job (mixinDock) — it fires for
+        // every route that reveals a panel, not just this one.
         this.setPanelDocked("browser", next);
-        // Nothing is listed until the panel is first opened, so that open has to
-        // fetch — from the folder the last session left it in, when there was one.
-        if (next && !this._browserLoaded) this.browseTo(this._browserDir, { force: true });
-        else if (next) this._renderBrowserList();
         if (!next) this._stopBrowserPreview();
         this._syncBrowserToggleState();
     },
@@ -168,6 +171,16 @@ export const BrowserMixin = {
         // "this folder has no media in it" rather than "this is not a folder".
         // The roots still come back on a failure, so the jump menu can rescue it.
         if (!data || !data.path || data.error) {
+            // The folder the last session was left in can be gone by the next
+            // one — a temp dir that was cleaned, a share not mounted yet. On the
+            // FIRST listing, fall back to the server's default (ComfyUI's input
+            // folder) rather than opening on an error. Once something has been
+            // listed, a bad path is the user's own typing and gets reported
+            // instead of silently jumping somewhere else.
+            if (dir && !this._browserLoaded) {
+                this.browseTo(null, { force: true });
+                return;
+            }
             this._fillBrowserRoots(data && data.roots);
             const why = (data && data.error) || "Nothing came back.";
             this._setBrowserStatus([dir, why].filter(Boolean).join("\n"));

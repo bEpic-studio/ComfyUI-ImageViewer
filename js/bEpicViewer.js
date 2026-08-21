@@ -543,10 +543,9 @@ class ViewerPanel extends HTMLElement {
 
         this.paramsBtn.onclick = () => {
             if (!this.paramsPanel) return;
-            const nowOpen = this.togglePanelDocked('params');
-            this.paramsBtn.style.color = nowOpen ? "#f60" : "#eee";
-            this.paramsBtn.classList.toggle('active', nowOpen);
-            if (nowOpen) this.updateParamsPanel(true);
+            // The button's own state and filling the panel in are both handled
+            // by applyDockLayout (_syncPanelToggleButtons / _onPanelShown).
+            this.togglePanelDocked('params');
         };
     }
 
@@ -599,11 +598,8 @@ class ViewerPanel extends HTMLElement {
 
         this.historyToggleBtn = sr.getElementById('history-toggle-btn');
         if (this.historyToggleBtn) {
-            this.historyToggleBtn.onclick = () => {
-                const nowOpen = this.togglePanelDocked('history');
-                if (nowOpen) { this._historyPanelSig = null; this.renderHistoryPanel(); }
-                this._syncHistoryToggleState();
-            };
+            // Rendering the strip on the way in is _onPanelShown's job (mixinDock).
+            this.historyToggleBtn.onclick = () => this.togglePanelDocked('history');
         }
 
         this._syncHistoryToggleState();
