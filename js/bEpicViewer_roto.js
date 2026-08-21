@@ -254,7 +254,10 @@ export const RotoMixin = {
             const nm = el("span", layer.name || ("Shape " + (i + 1)), "nm");
             nm.ondblclick = (e) => {
                 e.stopPropagation();
-                const v = prompt("Shape name:", layer.name || "");
+                // Undocked, a bare prompt() opens behind the popout — see
+                // LayoutMixin._dlgWin for the whole story.
+                const dlgWin = (this._viewerWindow && this._viewerWindow()) || window;
+                const v = dlgWin.prompt("Shape name:", layer.name || "");
                 if (v != null) { layer.name = v; this._rotoSave(); this._rotoRefreshLayerList(); }
             };
             const del = el("span", "✕", "del");

@@ -4,6 +4,20 @@ import { api } from "../../scripts/api.js";
 
 export const LayoutMixin = {
 
+    /**
+     * The window to raise a dialog in.
+     *
+     * Undocking moves the panel's container into the popout document, but this
+     * module still runs in the page that loaded it — so a bare prompt() or
+     * alert() opens on the ComfyUI tab behind the popout, where Chrome may
+     * defer it and the user certainly cannot see it. That is why Store Layout
+     * looked like it did nothing while undocked: the name prompt was up on the
+     * other window. _viewerWindow follows the container.
+     */
+    _dlgWin() {
+        return (this._viewerWindow && this._viewerWindow()) || window;
+    },
+
     async loadLayouts() {
         try {
             const res = await api.getUserData("bEpicViewer_layouts.json");
@@ -49,7 +63,8 @@ export const LayoutMixin = {
     },
 
     async storeCurrentLayout() {
-        const name = prompt("Enter a name for this layout:");
+        const win = this._dlgWin();
+        const name = win.prompt("Enter a name for this layout:");
         if (!name) return;
 
         const styles = window.getComputedStyle(this);
@@ -72,10 +87,10 @@ export const LayoutMixin = {
         try {
             await api.storeUserData("bEpicViewer_layouts.json", this.customLayouts);
             this.refreshLayoutMenu();
-            alert(`Layout '${name}' saved to ComfyUI user directory!`);
+            win.alert(`Layout '${name}' saved to ComfyUI user directory!`);
         } catch (e) {
             console.error("Error saving layout", e);
-            alert("Failed to save layout to server.");
+            win.alert("Failed to save layout to server.");
         }
     },
 
@@ -124,13 +139,14 @@ export const LayoutMixin = {
         layoutData.savedAt = Date.now();
 
         this.factoryDefaultLayout = layoutData;
+        const win = this._dlgWin();
         try {
             await api.storeUserData("bEpicViewer_factory_default.json", this.factoryDefaultLayout);
-            alert("Factory default layout saved.");
+            win.alert("Factory default layout saved.");
             this.refreshLayoutMenu();
         } catch (e) {
             console.error("Error saving factory default layout", e);
-            alert("Failed to save factory default layout.");
+            win.alert("Failed to save factory default layout.");
         }
     },
 
@@ -143,6 +159,11 @@ export const LayoutMixin = {
 
     openManagePanel() {
         if (!this.managePanel) this.createManagePanel();
+        // It is position:fixed in whichever document it lives in, so after a
+        // dock or undock it has to move to the one now on screen — otherwise it
+        // opens, correctly, on a window nobody is looking at.
+        const doc = this._dlgWin().document;
+        if (this.managePanel.ownerDocument !== doc) doc.body.appendChild(this.managePanel);
         this.renderManagePanel();
         this.managePanel.style.display = 'flex';
     },
@@ -181,7 +202,7 @@ export const LayoutMixin = {
         panel.appendChild(list);
 
         this.managePanel = panel;
-        document.body.appendChild(panel);
+        this._dlgWin().document.body.appendChild(panel);
     },
 
     renderManagePanel() {
@@ -206,10 +227,11 @@ export const LayoutMixin = {
             const rename = document.createElement('button');
             rename.innerText = 'Rename';
             rename.onclick = async () => {
-                const newName = prompt("Enter new name for this layout:", k);
+                const win = this._dlgWin();
+                const newName = win.prompt("Enter new name for this layout:", k);
                 if (!newName || newName === k) return;
                 if (this.customLayouts[newName]) {
-                    alert(`A layout named '${newName}' already exists.`);
+                    win.alert(`A layout named '${newName}' already exists.`);
                     return;
                 }
                 // move data to new key
@@ -222,7 +244,7 @@ export const LayoutMixin = {
             const del = document.createElement('button');
             del.innerText = 'Delete';
             del.onclick = async () => {
-                if (!confirm(`Delete layout '${k}'?`)) return;
+                if (!this._dlgWin().confirm(`Delete layout '${k}'?`)) return;
                 delete this.customLayouts[k];
                 try { await api.storeUserData('bEpicViewer_layouts.json', this.customLayouts); } catch (e) { console.error(e); }
                 this.refreshLayoutMenu();
