@@ -74,6 +74,39 @@ def _resolve_raw_path(path):
                 return cand, True
     return cand, False
 
+def _resolve_comfy_ref(filename, type_name, subfolder):
+    """Absolute path for ComfyUI's own {filename, type, subfolder} addressing.
+
+    The same triple /view takes, resolved against the same roots, so a thumbnail
+    can be asked for by the only name a node run gives its outputs. Confined to
+    those roots on purpose: unlike a user-picked path, this triple arrives from
+    the page, so it is checked rather than trusted. Returns None when it does not
+    land inside the root it named.
+    """
+    name = (filename or "").strip()
+    if not name:
+        return None
+    try:
+        base = folder_paths.get_directory_by_type(type_name or "output")
+    except Exception:
+        base = None
+    if not base:
+        return None
+    base = os.path.abspath(base)
+    cand = os.path.abspath(os.path.join(base, (subfolder or "").strip(), name))
+    # Containment check, not a string prefix: "..\..\secrets" normalises away
+    # here, and a sibling directory whose name merely starts with the root's does
+    # not pass.
+    try:
+        inside = os.path.commonpath([os.path.normcase(base),
+                                     os.path.normcase(cand)])
+        if inside != os.path.normcase(base):
+            return None
+    except Exception:
+        return None
+    return cand
+
+
 # One directory listing is meant to be read, not scrolled forever; a frame
 # request costs a probe per video, so it is capped harder.
 _BROWSE_FILE_CAP = 3000
@@ -409,6 +442,50 @@ try:
                 return web.Response(status=404, text="file not found")
             return _file_response(path)
 
+        async def _bepic_thumb(request):
+            """Serve a small cached stand-in for an image, for the thumbnail strips.
+
+            Falls back to the original file whenever a thumbnail cannot be made —
+            already small enough, a vector, no decoder — so the client never has to
+            know which happened and a tile always shows a picture.
+
+            Reach is deliberately the same as /bepic/view_file, which already serves
+            any absolute path the user picked: this hands back a SHRUNK version of
+            bytes that endpoint would give in full, so it widens nothing.
+            """
+            params = dict(request.query)
+            path = params.get('path')
+            if not path:
+                # A node run hands the viewer {filename, subfolder, type} and no
+                # path at all — that is how ComfyUI's own /view addresses a file,
+                # and it is the SHAPE THE HISTORY STRIP ACTUALLY USES. Resolving it
+                # here is what makes this endpoint reachable for generated images
+                # rather than only for files opened by path.
+                path = _resolve_comfy_ref(params.get('filename'),
+                                          params.get('type'),
+                                          params.get('subfolder'))
+                if path is None:
+                    return web.Response(status=400,
+                                        text="missing 'path', or an unresolvable filename")
+            path = os.path.abspath(path)
+            if not os.path.isfile(path):
+                return web.Response(status=404, text="file not found")
+
+            if media_resolve is not None:
+                try:
+                    size = params.get('max')
+                    thumb = (media_resolve.thumb_for(path, size) if size
+                             else media_resolve.thumb_for(path))
+                    if thumb and os.path.isfile(thumb):
+                        # Cache hard: a thumbnail is keyed on the source's mtime, so
+                        # a changed source lands on a different cache entry rather
+                        # than needing this one revalidated.
+                        return web.FileResponse(
+                            thumb, headers={"Cache-Control": "public, max-age=31536000"})
+                except Exception as e:
+                    print(f"[bEpicViewer] thumb failed for {path}: {e}")
+            return _file_response(path)
+
         async def _bepic_clear_cache(request):
             try:
                 temp_base = folder_paths.get_temp_directory()
@@ -653,6 +730,8 @@ try:
         _safe_add("POST", "/bepic/browse_frames", _bepic_browse_frames)
         _safe_add("POST", "/api/bepic/browse_frames", _bepic_browse_frames)
         _safe_add("GET", "/bepic/view_file", _bepic_view_file)
+        _safe_add("GET", "/bepic/thumb", _bepic_thumb)
+        _safe_add("GET", "/api/bepic/thumb", _bepic_thumb)
         _safe_add("GET", "/api/bepic/view_file", _bepic_view_file)
         _safe_add("POST", "/bepic/save_annotation", _bepic_save_annotation)
         _safe_add("POST", "/api/bepic/save_annotation", _bepic_save_annotation)

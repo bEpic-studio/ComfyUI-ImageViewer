@@ -204,6 +204,69 @@ def proxy_for_display(path):
     return None
 
 
+# ── Thumbnails for the strips ────────────────────────────────────────────────
+#
+# The history strip and the file browser show tiles ~83px wide. Pointing those at
+# the original render made each one cost its full decoded bitmap for as long as it
+# stayed attached: measured on eight real outputs, 16.6 MB fetched and 36.6 MB
+# resident to draw 0.16 MB worth of tiles — 234x. `loading="lazy"` only spared the
+# tiles scrolled out of view. A 256px cached PNG is what those tiles actually need,
+# and the full-resolution file is still what a SELECTED item loads.
+#
+# Same cache discipline as the display proxies above: one deterministic temp-dir
+# entry per source, reused until the source's mtime moves past it, `bEpic_`-prefixed
+# so the Clear Cache button already collects it. Generated on first request, so a
+# 500-frame directory costs nothing until its tiles are actually looked at.
+
+THUMB_MAX_SIDE = 256
+
+
+def thumb_for(path, max_side=THUMB_MAX_SIDE):
+    """A small cached PNG standing in for `path` in a thumbnail strip.
+
+    None means "just serve the original": the file is already no bigger than a
+    thumbnail, it is a vector, or nothing on this install can decode it. The
+    caller falls back rather than failing, so a format we cannot shrink still
+    shows a picture.
+    """
+    try:
+        max_side = max(16, int(max_side))
+    except (TypeError, ValueError):
+        max_side = THUMB_MAX_SIDE
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in IMAGE_EXTS or ext == ".svg":
+        # Videos get a poster extracted for them elsewhere (/bepic/extract_frame);
+        # an SVG is a few KB of text that scales itself.
+        return None
+
+    try:
+        # The size is part of the key: two callers asking for different sizes must
+        # not hand each other the wrong picture.
+        dst = _cache_path(path, "thumb%d" % max_side)
+    except Exception:
+        return None
+    if _cached(dst, path):
+        return dst
+
+    # Read through the display proxy for the formats an <img> cannot decode, so an
+    # exr thumbnail gets the same colour treatment as the exr itself.
+    src = path
+    if needs_proxy(path):
+        src = proxy_for_display(path) or path
+
+    try:
+        from PIL import Image
+        with Image.open(src) as im:
+            if max(im.width, im.height) <= max_side:
+                return None          # nothing to gain; the original IS a thumbnail
+            im.thumbnail((max_side, max_side), Image.LANCZOS)
+            im.convert("RGB").save(dst, compress_level=4)
+        return dst
+    except Exception as e:
+        print("[bEpicViewer] could not thumbnail %s: %s" % (path, e))
+        return None
+
+
 def _natural_key(name):
     """Sort key that orders frame_2.png before frame_10.png."""
     return [int(tok) if tok.isdigit() else tok.lower()

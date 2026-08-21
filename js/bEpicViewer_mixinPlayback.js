@@ -59,11 +59,36 @@ export const PlaybackMixin = {
 
     // Thumbnail URL for a frame. Video frames carry an extracted `thumb` PNG
     // because an <img> (history strip) can't render the video file itself.
+    //
+    // An IMAGE has no such poster, and this used to fall through to the full
+    // render — so a strip of 83px tiles held the decoded bitmap of every one of
+    // them. Measured on eight real outputs: 16.6 MB fetched, 36.6 MB resident, to
+    // draw 0.16 MB of tiles. /bepic/thumb serves a 256px cached PNG instead, and
+    // falls back to the original by itself when it cannot make one, so there is
+    // nothing to check for here. Selecting an item still loads the full file —
+    // that path goes through buildImgUrl, not this.
     thumbUrl(imgObj) {
         if (imgObj && imgObj.thumb) {
             // A dropped video's poster is an inline data:/blob: URL, not a temp path.
             if (/^(data:|blob:)/.test(imgObj.thumb)) return imgObj.thumb;
             return this.buildImgUrl({ path: imgObj.thumb, type: "temp" });
+        }
+        // A dropped OS file lives in an in-memory blob: URL the server cannot
+        // reach, so it is the one case that still hands over the whole thing.
+        if (imgObj && !imgObj.url) {
+            if (imgObj.path) {
+                return api.apiURL(`/bepic/thumb?path=${encodeURIComponent(imgObj.path)}`);
+            }
+            // A node run gives its outputs no path — {filename, subfolder, type} is
+            // the only name they have, the same triple /view takes. This is the
+            // case the history strip is actually made of, so missing it would have
+            // left the whole thing thumbnailing nothing.
+            if (imgObj.filename) {
+                let q = `?filename=${encodeURIComponent(imgObj.filename)}`;
+                q += `&type=${encodeURIComponent(imgObj.type || "output")}`;
+                if (imgObj.subfolder) q += `&subfolder=${encodeURIComponent(imgObj.subfolder)}`;
+                return api.apiURL(`/bepic/thumb${q}`);
+            }
         }
         return this.buildImgUrl(imgObj);
     },
