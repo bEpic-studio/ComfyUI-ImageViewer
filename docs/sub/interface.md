@@ -82,13 +82,7 @@ The bottom bar contains (left to right):
 
 The history strip, the file browser and the parameters panel all live in one of two **rails**, left and right of the picture. A rail is a vertical stack, so panels can sit side by side *or* above one another.
 
-Every panel wears a slim **title bar** across its top — a grip, the panel's name, and two buttons:
-
-| Control | What it does |
-|---|---|
-| The bar itself | Drag it to move the panel. This is the handle for everything below. |
-| **⇤ / ⇥** | Send the panel straight to the rail on the other side. |
-| **✕** | Put the panel away. It keeps its slot, so showing it again brings it back where it was. |
+Every panel wears a slim **title bar** across its top — a grip, the panel's name, and a **✕**. Drag the bar to move the panel; the ✕ puts it away, keeping its slot so showing it again brings it back where it was.
 
 **Drag a panel by its title bar** to move it:
 
@@ -102,7 +96,13 @@ Every panel wears a slim **title bar** across its top — a grip, the panel's na
 - The bar between two stacked panels sets how they split the height.
 - Panels have minimums, so neither drag can squeeze one out of existence. In the file browser the *preview* gives up its height first, so the file list stays readable however short the panel gets.
 
-Arrangements are remembered between sessions, and stored in a layout when you save one. Picking a saved layout from the layout menu applies its arrangement; otherwise the viewer opens the way you left it.
+### Saving an arrangement
+
+**Store Current** in the layout menu saves the whole arrangement under a name — which rail each panel is in, in what order, the rail widths, how a stack splits its height, which panels are showing, and the viewer's own position and size. Picking that layout later puts all of it back.
+
+**Make Current Layout default** does the same for how the viewer opens.
+
+Between the two, the viewer opens with **whichever you set last**: save a default and it opens that way; drag a panel around afterwards and that is what comes back next time.
 
 ## Resizing & Moving the Panel
 

@@ -144,7 +144,6 @@ export const DockMixin = {
         // Kept in step for anything still reading it (icons, older call sites).
         this.paramsSide  = this._dockSideOf("params")  || this.paramsSide  || "right";
         this.browserSide = this._dockSideOf("browser") || this.browserSide || "right";
-        this._syncDockIcons();
         this._syncPanelToggleButtons();
 
         // Compare geometry and the frame outline are measured against the
@@ -247,13 +246,6 @@ export const DockMixin = {
         this.queuePersistViewerState && this.queuePersistViewerState();
     },
 
-    /** Send a panel to the other rail — what the header's Switch Side does. */
-    togglePanelSide(id) {
-        const side = this._dockSideOf(id);
-        if (!side) return;
-        this.dockPanelTo(id, side === "left" ? "right" : "left", null);
-    },
-
     /** The toolbar's three toggles, lit from the dock rather than each other. */
     _syncPanelToggleButtons() {
         if (this.historyToggleBtn) {
@@ -266,17 +258,6 @@ export const DockMixin = {
             const open = this.isPanelDocked("params");
             this.paramsBtn.style.color = open ? "#f60" : "#eee";
             this.paramsBtn.classList.toggle("active", open);
-        }
-    },
-
-    _syncDockIcons() {
-        if (!this._setIcon) return;
-        const btns = { history: this.historyDockBtn, browser: this.browserDockBtn, params: this.paramsDockBtn };
-        for (const [id, btn] of Object.entries(btns)) {
-            if (!btn) continue;
-            const side = this._dockSideOf(id) || "right";
-            this._setIcon(btn, side === "left" ? "icon-dock-left" : "icon-dock-right");
-            btn.classList.toggle("left", side === "left");
         }
     },
 
@@ -387,29 +368,23 @@ export const DockMixin = {
             const name = doc.createElement("span");
             name.className = "pt-name";
             name.textContent = DOCK_PANELS[id].label;
-            const side = doc.createElement("button");
-            side.className = "pt-btn";
-            side.id = `${id}-dock-btn`;
-            side.title = "Switch Side";
+            // No Switch Side button: dragging the bar puts the panel exactly
+            // where you want it, including which rail and in what order, so a
+            // button that only flips it between two of those was redundant.
             const hide = doc.createElement("button");
             hide.className = "pt-btn pt-close";
             hide.id = `${id}-hide-btn`;
             hide.title = "Hide this panel";
             hide.textContent = "\u2715";
 
-            bar.append(grip, name, side, hide);
+            bar.append(grip, name, hide);
             el.insertBefore(bar, el.firstChild);
 
-            side.addEventListener("pointerdown", (e) => e.stopPropagation());
             hide.addEventListener("pointerdown", (e) => e.stopPropagation());
-            side.addEventListener("click", (e) => { e.stopPropagation(); this.togglePanelSide(id); });
             hide.addEventListener("click", (e) => { e.stopPropagation(); this.setPanelDocked(id, false); });
 
             bar.addEventListener("pointerdown", (e) => this._onDockHeaderDown(id, bar, e));
         }
-        // The dock owns these references now; they used to point at buttons
-        // sitting inside each panel's own header.
-        this[`${id}DockBtn`] = bar.querySelector(`#${id}-dock-btn`);
         return bar;
     },
 

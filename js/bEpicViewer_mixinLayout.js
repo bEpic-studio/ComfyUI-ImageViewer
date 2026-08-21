@@ -119,6 +119,10 @@ export const LayoutMixin = {
             layoutData.browserPreviewHeight = this._browserPreviewH || null;
         } catch (e) { console.warn('Could not read panel states for factory default', e); }
 
+        // Stamped so startup can tell it apart from the arrangement the last
+        // session happened to be left in — see restoreViewerState.
+        layoutData.savedAt = Date.now();
+
         this.factoryDefaultLayout = layoutData;
         try {
             await api.storeUserData("bEpicViewer_factory_default.json", this.factoryDefaultLayout);

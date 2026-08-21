@@ -64,12 +64,6 @@ export const BrowserMixin = {
         this._renderBrowserPreview(null);
     },
 
-    // Sides, widths and placement belong to the dock mixin. This just names the
-    // panel the header button acts on.
-    toggleBrowserSide() {
-        this.togglePanelSide("browser");
-    },
-
     /** The folder this viewer was last left in, or null for the server default. */
     _savedBrowserDir() {
         try {

@@ -12,7 +12,7 @@ It opens on **ComfyUI's input folder**, which the server reports, so it is the r
 
 ### The panel
 
-The title bar across the top moves the panel — see [Docking Panels](interface.md#docking-panels). Below it:
+Drag the title bar across the top to move the panel — see [Docking Panels](interface.md#docking-panels). Below it:
 
 | Part | What it does |
 |---|---|

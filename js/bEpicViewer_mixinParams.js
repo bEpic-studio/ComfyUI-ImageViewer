@@ -51,12 +51,6 @@ export const ParamsMixin = {
         }
     },
 
-    // Sides and widths belong to the dock mixin — this just names the panel it
-    // acts on. Kept as a method because the header button and the keymap call it.
-    toggleParamsSide() {
-        this.togglePanelSide("params");
-    },
-
     applyToSelectedNodes(name, value) {
         if (!this.selectedNodeIds) return;
         this.selectedNodeIds.forEach(id => {

@@ -294,11 +294,18 @@ class ViewerPanel extends HTMLElement {
         const restoredActive = typeof parsed.activeTab === 'string' ? parsed.activeTab : null;
 
         // How the panels were arranged, restored ahead of the early-out below —
-        // a session that opened no tabs still deserves its layout back. This is
-        // applied AFTER the factory default (init order), so panels dragged
-        // somewhere new stay there across a reload; picking a named layout from
-        // the menu still overrides it, because that happens on demand.
-        if (parsed.dock && this.applyDockData) {
+        // a session that opened no tabs still deserves its layout back.
+        //
+        // This runs after applyFactoryDefault (see init), so without a guard it
+        // would always win, and "Make Current Layout default" would appear to
+        // forget every panel position the moment you reloaded. Whichever the
+        // user set LAST wins instead: save a default and it opens that way; drag
+        // a panel afterwards and THAT is what comes back next time. A default
+        // saved before this change carries no stamp and counts as older, which
+        // is the behaviour those sessions already had.
+        const dockSavedAt = Number(parsed.savedAt) || 0;
+        const defaultSavedAt = Number(this.factoryDefaultLayout && this.factoryDefaultLayout.savedAt) || 0;
+        if (parsed.dock && this.applyDockData && dockSavedAt >= defaultSavedAt) {
             try { this.applyDockData(parsed.dock); }
             catch (e) { console.warn('bEpicViewer: could not restore the dock layout', e); }
         }
@@ -403,11 +410,6 @@ class ViewerPanel extends HTMLElement {
         // Layout menu population can mutate nearby controls in some browsers,
         // so re-assert icon skin once layouts are ready.
         this._applyIconSkin();
-        // ...which stamps every ICON_MAP button with its DEFAULT glyph. A dock
-        // button's glyph is state, not decoration — it says which rail its panel
-        // is in — so those have to be re-asserted after the last skin pass, or a
-        // viewer restored to the left opens showing the right-hand icon.
-        if (this._syncDockIcons) this._syncDockIcons();
 
         this._bindToolbarHandlers();
 
@@ -518,7 +520,6 @@ class ViewerPanel extends HTMLElement {
 
         this.paramsContent  = sr.getElementById('params-content')  || pq('params-content');
         this.paramsTitle    = sr.getElementById('params-title')     || pq('params-title');
-        // paramsDockBtn is created with the title bar (mixinDock).
         this.paramsLockBtn  = sr.getElementById('params-lock-btn')  || pq('params-lock-btn');
 
         this.paramsBtn = sr.getElementById('params-btn');
