@@ -10,6 +10,10 @@ jobs:
   publish-node:
     name: Publish Custom Node to registry
     runs-on: ubuntu-latest
+    # Both szprivate (dev) and bEpic-studio (org) hold a REGISTRY_ACCESS_TOKEN and
+    # carry this file. Publish from one repo only — the second push of the same
+    # version is rejected by the registry as a duplicate.
+    if: github.repository == 'szprivate/ComfyUI-ImageViewer'
     steps:
       - name: Check out code
         uses: actions/checkout@v4
