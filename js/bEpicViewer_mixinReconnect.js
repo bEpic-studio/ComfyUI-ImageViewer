@@ -20,6 +20,14 @@
 //    the popout gets a small watchdog of its own (popoutWatchdog) that notices,
 //    puts up the warning, and calls out on a BroadcastChannel until a freshly
 //    loaded ComfyUI tab takes the window back (adoptOrphanPopout).
+//
+//    A reloaded tab gets the very same window back, found by name. A tab that
+//    was closed can't: its replacement is opened from outside (AYON will not
+//    relaunch while the old tab is open, then opens a new one), and Chrome's
+//    name lookup never reaches past the tabs one was opened from. So the new
+//    tab opens a fresh window where the old one sits and tells the old one to
+//    close — by itself if pop-ups are allowed, else from one click on the
+//    "Reconnect" button it puts up.
 import { api } from "../../scripts/api.js";
 
 // The popout is opened by name. That is what lets a reloaded tab find the
@@ -57,8 +65,19 @@ const TEXT = {
     tabStuck:      "ComfyUI is back, but its tab hasn't reconnected. Reload the ComfyUI tab; this window will reconnect to it.",
     tabGone:       "The ComfyUI tab this window belongs to was reloaded or closed.",
     serverDown:    "The ComfyUI server isn't responding. Waiting for it to come back…",
-    waitingForTab: "Waiting for the ComfyUI tab to reload. If you closed it, close this window and undock the viewer again from ComfyUI.",
+    waitingForTab: "Waiting for ComfyUI to open again. Reload or reopen the ComfyUI tab and this viewer comes back.",
+    clickToReconnect: "ComfyUI is open in a new tab. Click “Reconnect the bEpic Viewer window” at the top of that tab to bring this viewer back.",
 };
+
+// window.open features that put a new popout where `rect` says the old one was
+// (inner size, screen position). Chrome may still keep it on the opener's screen.
+function _popoutFeatures(rect) {
+    const r = rect || {};
+    const size = (v, d) => (Number.isFinite(v) && v > 100 ? Math.round(v) : d);
+    const parts = [`width=${size(r.w, 800)}`, `height=${size(r.h, 600)}`];
+    if (Number.isFinite(r.x) && Number.isFinite(r.y)) parts.push(`left=${Math.round(r.x)}`, `top=${Math.round(r.y)}`);
+    return parts.join(",");
+}
 
 // Runs inside the popout, in the popout's own realm, and that is the point: it
 // is the one piece of the viewer still running once the tab that owns the rest
@@ -100,8 +119,19 @@ function popoutWatchdog(cfg) {
     const render = () => {
         if (state.phase !== "orphaned") return;
         show(state.server === false ? cfg.text.serverDown
+           : state.prompted         ? cfg.text.clickToReconnect
            : state.server === true  ? cfg.text.waitingForTab
            :                          cfg.text.tabGone);
+    };
+
+    // A new ComfyUI tab that couldn't reach this window by name answers here:
+    // it has opened a replacement ("replaced"), so this one can go, or it is
+    // waiting for the click that lets it open one ("prompted").
+    if (channel) channel.onmessage = (e) => {
+        const msg = e.data || {};
+        if (msg.id !== cfg.token || state.phase !== "orphaned") return;
+        if (msg.type === "replaced") window.close();
+        else if (msg.type === "prompted") { state.prompted = true; render(); }
     };
 
     // The tab is alive but lost its server, and put the warning up itself. It
@@ -150,8 +180,13 @@ function popoutWatchdog(cfg) {
             await probe();
             if (state.phase !== "orphaned") return;   // taken over while the probe was out
             render();
-            // No tab can load without a server, so there is nobody to call before then.
-            if (state.server && channel) channel.postMessage({ type: "orphan", id: cfg.token });
+            // No tab can load without a server, so there is nobody to call before
+            // then. Where this window sits goes along, so a replacement can open
+            // in the same place.
+            if (state.server && channel) channel.postMessage({
+                type: "orphan", id: cfg.token,
+                rect: { x: window.screenX, y: window.screenY, w: window.innerWidth, h: window.innerHeight },
+            });
         } finally {
             busy = false;
         }
@@ -217,7 +252,7 @@ export const ReconnectMixin = {
             this._reconnectChannel = new BroadcastChannel(CHANNEL);
             this._reconnectChannel.onmessage = (e) => {
                 const msg = e.data || {};
-                if (msg.type === "orphan") this.adoptOrphanPopout(msg.id);
+                if (msg.type === "orphan") this.adoptOrphanPopout(msg);
             };
         }
         this._reconnectReady = true;
@@ -267,6 +302,12 @@ export const ReconnectMixin = {
         } catch (e) {
             console.warn("bEpicViewer: could not arm the popout watchdog", e);
         }
+        // The viewer has a window again, so an orphan waiting on this tab can go.
+        if (this._pendingOrphan) {
+            if (this._reconnectChannel) this._reconnectChannel.postMessage({ type: "replaced", id: this._pendingOrphan });
+            this._pendingOrphan = null;
+            this._removeReconnectOffer();
+        }
     },
 
     // Make `win` an empty about:blank the viewer can move into. A window found
@@ -292,29 +333,95 @@ export const ReconnectMixin = {
     },
 
     // A popout calling out on the channel has lost its tab. If this tab has only
-    // just loaded, it is most likely that tab coming back from a reload, so it
-    // takes the window over.
-    async adoptOrphanPopout(id) {
-        if (!this._reconnectReady || this._undocking) return;   // the next call-out retries
+    // just loaded, it is most likely that tab's successor, so it takes the
+    // viewer back: into the same window when it can reach it (a reload), into a
+    // new one where the old one was when it can't (a tab closed and reopened).
+    async adoptOrphanPopout(msg) {
+        const id = msg && msg.id;
+        if (!id || !this._reconnectReady || this._undocking) return;   // the next call-out retries
         if (this.popoutWindow && !this.popoutWindow.closed) return;
         if (Date.now() - HOST_LOADED_AT > ADOPT_WINDOW_MS) return;
         if (this._adoptTried.has(id)) return;
         this._adoptTried.add(id);
 
+        const features = _popoutFeatures(msg.rect);
         let win = null;
-        try { win = window.open("", POPOUT_NAME); } catch (e) {}
-        if (!win) return;   // out of reach, and the popup blocker stopped a new window
-        let wd = null;
-        try { wd = win.__bepicWatchdog || null; } catch (e) {}
-        if (!wd || !wd.claim()) {
-            // Out of reach — the orphan belongs to a tab this one was never
-            // related to — and popups are allowed here, so the lookup opened a
-            // new blank window. Put it away again.
-            if (!wd && _isBlankPopout(win)) { try { win.close(); } catch (e) {} }
+        try { win = window.open("", POPOUT_NAME, features); } catch (e) {}
+        if (!win) {
+            // Out of reach, and the pop-up blocker won't let a tab open a window
+            // on its own. It will on a click, so ask for one.
+            this._offerPopoutReconnect(id, features);
             return;
         }
-        if (await this._undockInto(win)) {
-            this.dispatchEvent(new CustomEvent("bepic-popout-adopted"));
+        let wd = null;
+        try { wd = win.__bepicWatchdog || null; } catch (e) {}
+        if (wd) {
+            // Found by name: the orphan itself — or another live tab's popout,
+            // which won't let itself be claimed.
+            if (wd.claim() && await this._undockInto(win)) {
+                this.dispatchEvent(new CustomEvent("bepic-popout-adopted"));
+            }
+            return;
         }
+        // Out of reach, and pop-ups are allowed, so the lookup opened a new
+        // window instead. That is the replacement.
+        if (_isBlankPopout(win)) await this._replaceOrphan(win, id);
+    },
+
+    // Move the viewer into `win`, a new window standing in for the orphan `id`.
+    // The orphan is told to close once the viewer is in (_armPopoutWatchdog).
+    async _replaceOrphan(win, id) {
+        this._pendingOrphan = id;
+        if (!(await this._undockInto(win))) return false;
+        this.dispatchEvent(new CustomEvent("bepic-popout-adopted"));
+        return true;
+    },
+
+    // The one-click way back when pop-ups are blocked: a button at the top of
+    // the ComfyUI page, and the orphan told to point at it. Undocking by hand
+    // answers it just as well.
+    _offerPopoutReconnect(id, features) {
+        this._pendingOrphan = id;
+        if (this._reconnectChannel) this._reconnectChannel.postMessage({ type: "prompted", id });
+        if (this._reconnectOffer) return;
+
+        const bar = document.createElement("div");
+        Object.assign(bar.style, {
+            position: "fixed", top: "10px", left: "50%", transform: "translateX(-50%)",
+            zIndex: "2147483646", display: "flex", alignItems: "center", gap: "6px",
+            padding: "4px", background: "rgba(20,20,20,0.95)", border: "1px solid #f60",
+            borderRadius: "6px", boxShadow: "0 4px 14px rgba(0,0,0,0.6)",
+            fontFamily: "'Segoe UI', sans-serif", fontSize: "13px",
+        });
+        const btn = document.createElement("button");
+        btn.textContent = "↻ Reconnect the bEpic Viewer window";
+        btn.title = "The undocked viewer lost its ComfyUI tab. Click to bring it back in a window of its own. " +
+                    "Allowing pop-ups for this site does this without the click.";
+        Object.assign(btn.style, {
+            background: "#f60", color: "#111", border: "none", borderRadius: "4px",
+            padding: "5px 12px", fontWeight: "600", cursor: "pointer",
+        });
+        const close = document.createElement("button");
+        close.textContent = "×";
+        close.title = "Dismiss";
+        Object.assign(close.style, {
+            background: "transparent", color: "#aaa", border: "none",
+            fontSize: "16px", cursor: "pointer", padding: "0 6px",
+        });
+
+        btn.onclick = async () => {
+            let win = null;
+            try { win = window.open("", POPOUT_NAME, features); } catch (e) {}
+            if (win && _isBlankPopout(win)) await this._replaceOrphan(win, id);
+        };
+        close.onclick = () => this._removeReconnectOffer();
+        bar.append(btn, close);
+        document.body.appendChild(bar);
+        this._reconnectOffer = bar;
+    },
+
+    _removeReconnectOffer() {
+        if (this._reconnectOffer) this._reconnectOffer.remove();
+        this._reconnectOffer = null;
     },
 };
