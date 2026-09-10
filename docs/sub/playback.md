@@ -32,7 +32,7 @@ Where the frame comes from depends on what the tab holds:
 |---|---|---|
 | Image sequence | Nothing is written — that frame is already a file | stays where it is |
 | `mp4` / `mov` / `webm` in ComfyUI's input, output or temp folder | The frame is decoded server-side and written as a PNG | **next to the clip**, named `<clip>_f00042.png` |
-| `mp4` / `mov` / `webm` anywhere else | The same | `output/extracted_frames/`, same name |
+| `mp4` / `mov` / `webm` anywhere else | The same | `output/extracted_frames/`, named `<clip>_f00042_<id>.png` — the id stands for the clip's folder, so two clips of the same name never share a frame |
 | A clip dropped in from Explorer | The frame is read out of the player itself — the server never had the file | `output/extracted_frames/` |
 
 Notes:

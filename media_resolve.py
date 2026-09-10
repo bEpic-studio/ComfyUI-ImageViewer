@@ -417,7 +417,14 @@ def _extract_targets(video_path, name, beside=True):
     if folder and beside:
         targets.append(os.path.join(folder, name))
     try:
-        targets.append(os.path.join(extract_dir_fallback(), name))
+        # Clips from every folder share this one, and two shots can both have a
+        # plate.mp4. An extract already on disk is reused on its name alone
+        # (see extract_frame), so without the clip's path in the name, frame 12
+        # of one shot would be handed back as frame 12 of the other.
+        stem, ext = os.path.splitext(name)
+        tag = hashlib.sha1(os.path.normcase(os.path.abspath(video_path))
+                           .encode("utf-8", "replace")).hexdigest()[:8]
+        targets.append(os.path.join(extract_dir_fallback(), f"{stem}_{tag}{ext}"))
     except Exception:
         pass
     return targets
