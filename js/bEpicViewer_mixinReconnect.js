@@ -6,8 +6,11 @@
 //
 //  - The server goes away (restart, crash, the AYON session closing) while the
 //    ComfyUI tab stays open. ComfyUI's api already retries its socket every
-//    300 ms and announces it with `reconnecting` / `reconnected`, so all the
-//    viewer has to do is say so.
+//    300 ms, so the viewer only has to say so — and to notice when it is back,
+//    which takes more than listening for `reconnected`: ComfyUI's resetSocket()
+//    reopens without announcing it, and while the viewer is undocked the tab is
+//    usually hidden, where Chrome runs its timers late. So the overlay follows
+//    the socket itself, and the popout's watchdog checks on it too.
 //
 //  - The ComfyUI tab itself goes away (reload, close) while the viewer is
 //    undocked. The popout window survives, but every line of the viewer's code
@@ -39,12 +42,19 @@ const HOST_TOKEN = (() => {
     return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 })();
 
+const socketOpen = () => !!(api.socket && api.socket.readyState === WebSocket.OPEN);
+
 // Set at load, not at panel init: a popout opened before init has finished
 // still has to find its tab alive, or it would give itself up at once.
-window.__bepicViewerHost = { token: HOST_TOKEN };
+// `socketOpen` is what the popout's watchdog reads to see through to ComfyUI's
+// socket; a plain call works even while this tab's own timers are held back.
+window.__bepicViewerHost = { token: HOST_TOKEN, socketOpen };
 
 const TEXT = {
     server:        "Lost the connection to the ComfyUI server. Retrying…",
+    serverBack:    "ComfyUI is back. Reconnecting…",
+    tabAsleep:     "ComfyUI is back, but its tab is in the background and hasn't reconnected yet. Switch to the ComfyUI tab once to wake it up.",
+    tabStuck:      "ComfyUI is back, but its tab hasn't reconnected. Reload the ComfyUI tab; this window will reconnect to it.",
     tabGone:       "The ComfyUI tab this window belongs to was reloaded or closed.",
     serverDown:    "The ComfyUI server isn't responding. Waiting for it to come back…",
     waitingForTab: "Waiting for the ComfyUI tab to reload. If you closed it, close this window and undock the viewer again from ComfyUI.",
@@ -55,7 +65,7 @@ const TEXT = {
 // has gone. It is injected as source text, so it must not refer to anything
 // outside itself.
 function popoutWatchdog(cfg) {
-    const state = { phase: "attached", server: null };
+    const state = { phase: "attached", server: null, serverUpSince: 0 };
     const channel = (typeof BroadcastChannel === "function") ? new BroadcastChannel(cfg.channel) : null;
 
     // The owning tab is alive for as long as the window that opened this one
@@ -69,46 +79,89 @@ function popoutWatchdog(cfg) {
         } catch (e) { return false; }
     };
 
-    const render = () => {
-        if (state.phase !== "orphaned") return;
-        const el = document.getElementById("reconnect-overlay");
+    const overlay = () => document.getElementById("reconnect-overlay");
+    const show = (text) => {
+        const el = overlay();
         if (!el) return;
         const detail = el.querySelector(".reconnect-detail");
-        if (detail) {
-            detail.textContent = state.server === false ? cfg.text.serverDown
-                               : state.server === true  ? cfg.text.waitingForTab
-                               :                          cfg.text.tabGone;
-        }
+        if (detail) detail.textContent = text;
         el.classList.add("visible");
     };
 
-    let probing = false;
-    const tick = async () => {
-        if (state.phase === "attached") {
-            if (!hostAlive()) orphan();
-            return;
-        }
-        if (state.phase !== "orphaned" || probing) return;
-        probing = true;
+    const probe = async () => {
         try {
-            const res = await fetch(cfg.probeUrl, { cache: "no-store" });
-            state.server = res.ok;
+            state.server = (await fetch(cfg.probeUrl, { cache: "no-store" })).ok;
         } catch (e) {
             state.server = false;
-        } finally {
-            probing = false;
         }
-        if (state.phase !== "orphaned") return;   // taken over while the probe was out
-        render();
-        // No tab can load without a server, so there is nobody to call before then.
-        if (state.server && channel) channel.postMessage({ type: "orphan", id: cfg.token });
+        state.serverUpSince = state.server ? (state.serverUpSince || Date.now()) : 0;
+    };
+
+    const render = () => {
+        if (state.phase !== "orphaned") return;
+        show(state.server === false ? cfg.text.serverDown
+           : state.server === true  ? cfg.text.waitingForTab
+           :                          cfg.text.tabGone);
+    };
+
+    // The tab is alive but lost its server, and put the warning up itself. It
+    // takes it down again on `reconnected` — but that tab is usually hidden
+    // behind this window, where Chrome runs its timers late or not at all. So
+    // look through to its socket from here: take the warning down the moment
+    // the socket is open, and until then say what the wait is for.
+    const watchHost = async () => {
+        const el = overlay();
+        if (!el || !el.classList.contains("visible")) {
+            state.serverUpSince = 0;
+            return;
+        }
+        let open = false, hidden = false;
+        try {
+            const host = window.opener;
+            open   = !!host.__bepicViewerHost.socketOpen();
+            hidden = host.document.visibilityState === "hidden";
+        } catch (e) {}
+        if (open) {
+            el.classList.remove("visible");
+            state.serverUpSince = 0;
+            return;
+        }
+        await probe();
+        // The tab may have reconnected, or gone, while the probe was out.
+        if (state.phase !== "attached" || !el.classList.contains("visible")) return;
+        const waited = state.serverUpSince ? Date.now() - state.serverUpSince : 0;
+        show(!state.server                            ? cfg.text.serverDown
+           : hidden && waited > cfg.asleepAfterMs     ? cfg.text.tabAsleep
+           : waited > cfg.stuckAfterMs                ? cfg.text.tabStuck
+           :                                            cfg.text.serverBack);
+    };
+
+    let busy = false;
+    const tick = async () => {
+        if (busy) return;
+        busy = true;
+        try {
+            if (state.phase === "attached") {
+                if (!hostAlive()) orphan();
+                else await watchHost();
+                return;
+            }
+            if (state.phase !== "orphaned") return;
+            await probe();
+            if (state.phase !== "orphaned") return;   // taken over while the probe was out
+            render();
+            // No tab can load without a server, so there is nobody to call before then.
+            if (state.server && channel) channel.postMessage({ type: "orphan", id: cfg.token });
+        } finally {
+            busy = false;
+        }
     };
 
     function orphan() {
         if (state.phase !== "attached") return;
         state.phase = "orphaned";
         render();
-        tick();
+        tick();     // a no-op when this came from inside a tick; the next one probes
     }
 
     window.__bepicWatchdog = {
@@ -146,6 +199,11 @@ export const ReconnectMixin = {
 
         api.addEventListener("reconnecting", () => this._showReconnecting(TEXT.server));
         api.addEventListener("reconnected",  () => this._hideReconnecting());
+        // `reconnected` isn't the only way back: resetSocket() opens its fresh
+        // socket as a first connection, which announces nothing. The server's
+        // first message on every new socket is a status, though, so a real
+        // status means connected. (A null one is ComfyUI saying it lost it.)
+        api.addEventListener("status", (e) => { if (e.detail) this._hideReconnecting(); });
 
         // Tell the popout the moment this tab goes, rather than on its next tick.
         window.addEventListener("pagehide", () => {
@@ -171,9 +229,19 @@ export const ReconnectMixin = {
         const d = el.querySelector(".reconnect-detail");
         if (d) d.textContent = detail;
         el.classList.add("visible");
+        // And should both events slip by, the socket itself says when it's back.
+        if (!this._reconnectPoll) {
+            this._reconnectPoll = setInterval(() => {
+                if (socketOpen()) this._hideReconnecting();
+            }, 1000);
+        }
     },
 
     _hideReconnecting() {
+        if (this._reconnectPoll) {
+            clearInterval(this._reconnectPoll);
+            this._reconnectPoll = null;
+        }
         if (this.reconnectOverlay) this.reconnectOverlay.classList.remove("visible");
     },
 
@@ -187,6 +255,10 @@ export const ReconnectMixin = {
                 // that created it, and that tab is exactly what may be gone.
                 probeUrl:   new URL(api.apiURL("/prompt"), window.location.href).href,
                 intervalMs: 1000,
+                // How long the server may be back before the tab not having
+                // reconnected is worth mentioning: hidden, then at all.
+                asleepAfterMs: 5000,
+                stuckAfterMs:  20000,
                 text:       TEXT,
             };
             const script = win.document.createElement("script");
