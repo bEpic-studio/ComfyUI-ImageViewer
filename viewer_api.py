@@ -1,3 +1,4 @@
+import io
 import os
 import re
 import base64
@@ -5,10 +6,51 @@ import traceback
 import folder_paths
 from server import PromptServer
 
+from . import path_access
+
 try:
     from . import media_resolve
 except Exception:  # pragma: no cover - viewer still works without the resolver
     media_resolve = None
+
+
+def _decode_image_upload(dataurl, force_png=False):
+    """(bytes, ext) to write for an uploaded data: URL.
+
+    The upload is decoded and re-encoded rather than written as it came. That is
+    the check: whatever lands on disk is an image PIL could read, with nothing
+    riding along after the pixels. Raises ValueError with a message for the
+    client.
+    """
+    m = re.match(r"^data:image/(png|jpeg);base64,(.*)$", dataurl or "", re.DOTALL)
+    if not m:
+        raise ValueError("expected a data:image/png or data:image/jpeg payload")
+    try:
+        raw = base64.b64decode(m.group(2), validate=True)
+    except Exception as e:
+        raise ValueError(f"base64 decode failed: {e}")
+
+    from PIL import Image
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            fmt = im.format
+            if fmt not in ("PNG", "JPEG"):
+                raise ValueError(f"expected a PNG or JPEG image, got {fmt or 'something else'}")
+            im.load()
+            if force_png:
+                fmt = "PNG"
+            if fmt == "JPEG" and im.mode not in ("RGB", "L", "CMYK"):
+                im = im.convert("RGB")
+            buf = io.BytesIO()
+            if fmt == "PNG":
+                im.save(buf, format="PNG", compress_level=4)
+            else:
+                im.save(buf, format="JPEG", quality=95)
+    except ValueError:
+        raise
+    except Exception as e:              # a truncated file, a decompression bomb, ...
+        raise ValueError(f"not a readable image: {e}")
+    return buf.getvalue(), ("png" if fmt == "PNG" else "jpg")
 
 
 def _file_response(path):
@@ -142,53 +184,26 @@ def _browse_default_dir():
             return d
     except Exception:
         pass
+    for _, path, _ in path_access.roots():
+        if os.path.isdir(path):
+            return path
     return os.path.abspath(os.getcwd())
 
 
 def _browse_parent(path):
-    """The directory above `path`, or None at a filesystem root."""
+    """The directory above `path`, or None at a filesystem root or at the edge
+    of the folders the viewer may open."""
     parent = os.path.dirname(os.path.abspath(path))
-    return parent if parent and parent != path else None
+    if not parent or parent == path or not path_access.is_allowed(parent):
+        return None
+    return parent
 
 
 def _browse_roots():
-    """Shortcut destinations for the browser's jump menu."""
-    roots, seen = [], set()
-
-    def add(label, path):
-        if not path:
-            return
-        p = os.path.abspath(path)
-        key = os.path.normcase(p)
-        if key in seen or not os.path.isdir(p):
-            return
-        seen.add(key)
-        roots.append({"label": label, "path": p})
-
-    for label, get in (("Input", getattr(folder_paths, "get_input_directory", None)),
-                       ("Output", getattr(folder_paths, "get_output_directory", None)),
-                       ("Temp", getattr(folder_paths, "get_temp_directory", None))):
-        try:
-            if get:
-                add(label, get())
-        except Exception:
-            pass
-    try:
-        add("Home", os.path.expanduser("~"))
-    except Exception:
-        pass
-
-    if os.name == "nt":
-        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-            drive = f"{letter}:\\"
-            try:
-                if os.path.isdir(drive):
-                    add(drive, drive)
-            except Exception:
-                continue
-    else:
-        add("/", "/")
-    return roots
+    """Shortcut destinations for the browser's jump menu: exactly the folders it
+    may open."""
+    return [{"label": label, "path": path}
+            for label, path, _ in path_access.roots() if os.path.isdir(path)]
 
 
 try:
@@ -238,9 +253,15 @@ try:
                 try:
                     base = folder_paths.get_temp_directory()
                 except Exception:
-                    base = os.getcwd()
+                    return web.json_response({"success": False, "error": "no output folder"}, status=500)
             full = os.path.abspath(os.path.join(base, rel))
             print(f"[bEpicGetPath] base directory: {base!r}, full path: {full!r}")
+
+            # The suffix is typed on the node, and a "..\.." in it would otherwise
+            # create folders anywhere on the machine and open Explorer on them.
+            if not path_access.within(full, base):
+                return web.json_response(
+                    {"success": False, "error": f"{full} is outside {base}"}, status=403)
 
             if os.path.isdir(full):
                 target_dir = full
@@ -304,10 +325,15 @@ try:
                     external = False
                 if not p or not isinstance(p, str):
                     continue
-                # External frames come from the folder picker / drag-drop and are
-                # served by /bepic/view_file, which has no directory restriction —
-                # so for those, existing on disk is the whole test.
+                # External frames come from the file browser, a loader node or
+                # drag-drop and are served by /bepic/view_file. One outside the
+                # allowed folders is left out of the answer entirely: reporting it
+                # would get it pruned from history before the user has had a
+                # chance to allow its folder, and answering "gone" or not for it
+                # would tell any caller which files exist.
                 if external:
+                    if not path_access.is_allowed(p):
+                        continue
                     if not os.path.isfile(os.path.abspath(p)):
                         unreachable.append({"path": p, "reason": "gone"})
                     continue
@@ -324,15 +350,22 @@ try:
 
             No path → ComfyUI's input directory, which is where the browser opens.
 
-            Only directories and media files are reported. That is not a security
-            boundary — /bepic/view_file already serves any absolute path the user
-            names, and the folder picker this replaced could reach anywhere too —
-            it just keeps the panel to what the viewer can actually show.
+            Confined to the allowed folders (path_access); only directories and
+            media files are reported within them.
             """
             raw = (request.query.get("path") or "").strip()
             if not raw:
                 raw = _browse_default_dir()
             path = os.path.abspath(os.path.expanduser(raw))
+
+            # Before any look at the disk, so a refusal says nothing about
+            # whether the folder exists.
+            if not path_access.is_allowed(path):
+                return web.json_response({
+                    "path": path, "parent": None, "roots": _browse_roots(),
+                    "dirs": [], "files": [], "truncated": False,
+                    "error": path_access.refusal(path),
+                }, status=403)
 
             if not os.path.isdir(path):
                 return web.json_response({
@@ -416,7 +449,7 @@ try:
                 if not raw or not isinstance(raw, str):
                     continue
                 p = os.path.abspath(raw)
-                if not os.path.isfile(p):
+                if not path_access.is_allowed(p) or not os.path.isfile(p):
                     missing.append(raw)
                     continue
                 ext = os.path.splitext(p)[1].lower()
@@ -432,12 +465,14 @@ try:
             return web.json_response({"frames": frames, "missing": missing})
 
         async def _bepic_view_file(request):
-            """Serve any absolute file path selected by the user (no directory restriction)."""
+            """Serve a file by absolute path, from inside the allowed folders."""
             params = dict(request.query)
             path = params.get('path') or params.get('filename')
             if not path:
                 return web.Response(status=400, text="missing 'path' parameter")
             path = os.path.abspath(path)
+            if not path_access.is_allowed(path):
+                return web.Response(status=403, text=path_access.refusal(path))
             if not os.path.isfile(path):
                 return web.Response(status=404, text="file not found")
             return _file_response(path)
@@ -449,9 +484,9 @@ try:
             already small enough, a vector, no decoder — so the client never has to
             know which happened and a tile always shows a picture.
 
-            Reach is deliberately the same as /bepic/view_file, which already serves
-            any absolute path the user picked: this hands back a SHRUNK version of
-            bytes that endpoint would give in full, so it widens nothing.
+            Reach is deliberately the same as /bepic/view_file — the allowed
+            folders: this hands back a SHRUNK version of bytes that endpoint would
+            give in full, so it widens nothing.
             """
             params = dict(request.query)
             path = params.get('path')
@@ -468,6 +503,8 @@ try:
                     return web.Response(status=400,
                                         text="missing 'path', or an unresolvable filename")
             path = os.path.abspath(path)
+            if not path_access.is_allowed(path):
+                return web.Response(status=403, text=path_access.refusal(path))
             if not os.path.isfile(path):
                 return web.Response(status=404, text="file not found")
 
@@ -533,19 +570,14 @@ try:
             except Exception:
                 return web.json_response({"error": "invalid JSON body"}, status=400)
 
-            dataurl = data.get("dataurl") or ""
             prefix = str(data.get("filename_prefix") or "bEpic_annotation")
             # Keep only filesystem-safe characters in the prefix.
             prefix = "".join(c for c in prefix if c.isalnum() or c in ("_", "-")) or "bEpic_annotation"
 
-            m = re.match(r"^data:image/(png|jpeg);base64,(.*)$", dataurl, re.DOTALL)
-            if not m:
-                return web.json_response({"error": "expected a data:image/png;base64 payload"}, status=400)
-            ext = "png" if m.group(1) == "png" else "jpg"
             try:
-                raw = base64.b64decode(m.group(2))
-            except Exception as e:
-                return web.json_response({"error": f"base64 decode failed: {e}"}, status=400)
+                raw, ext = _decode_image_upload(data.get("dataurl"))
+            except ValueError as e:
+                return web.json_response({"error": str(e)}, status=400)
 
             try:
                 out_dir = folder_paths.get_output_directory()
@@ -577,7 +609,10 @@ try:
             graph. Two body shapes, matching the two kinds of clip the viewer can
             be playing:
               { path | filename+subfolder+type, frame } — a video the server can
-                read; the PNG is written next to it (see media_resolve).
+                read, inside the allowed folders. The PNG is written next to it
+                when it sits in ComfyUI's input, output or temp folder, and in
+                ./output/extracted_frames otherwise: this route writes files, so
+                it never writes outside ComfyUI's own folders.
               { dataurl, name } — a clip that exists only in the browser (dropped
                 in from Explorer), whose frame the viewer grabbed off the <video>
                 itself. There is no original for it to sit beside, so those land
@@ -601,14 +636,10 @@ try:
 
             dataurl = data.get("dataurl") or ""
             if dataurl:
-                m = re.match(r"^data:image/(png|jpeg);base64,(.*)$", dataurl, re.DOTALL)
-                if not m:
-                    return web.json_response(
-                        {"error": "expected a data:image/png;base64 payload"}, status=400)
                 try:
-                    raw = base64.b64decode(m.group(2))
-                except Exception as e:
-                    return web.json_response({"error": f"base64 decode failed: {e}"}, status=400)
+                    raw, _ = _decode_image_upload(dataurl, force_png=True)
+                except ValueError as e:
+                    return web.json_response({"error": str(e)}, status=400)
                 stem = os.path.splitext(os.path.basename(str(data.get("name") or "clip")))[0]
                 stem = "".join(c for c in stem if c.isalnum() or c in ("_", "-")) or "clip"
                 try:
@@ -627,13 +658,18 @@ try:
                                           "filename": os.path.basename(fpath)})
 
             raw_path = data.get("path") or data.get("filename") or ""
-            path = media_resolve.resolve_path(raw_path, str(data.get("type") or ""))
+            try:
+                path = media_resolve.resolve_path(raw_path, str(data.get("type") or ""),
+                                                  allow=path_access.is_allowed)
+            except PermissionError as e:
+                return web.json_response({"error": path_access.refusal(e.args[0])}, status=403)
             if not path or not os.path.isfile(path):
                 return web.json_response(
                     {"error": f"could not find {raw_path!r} on disk"}, status=404)
 
             try:
-                out = media_resolve.extract_frame(path, frame)
+                out = media_resolve.extract_frame(
+                    path, frame, beside=path_access.in_comfy_dirs(path))
             except ValueError as e:
                 return web.json_response({"error": str(e)}, status=422)
             except Exception as e:
@@ -689,6 +725,7 @@ try:
                         files,
                         ann_type=str(data.get("type") or "input"),
                         label=str(data.get("label") or ""),
+                        allow=path_access.is_allowed,
                     )
                 else:
                     tabs = media_resolve.resolve(
@@ -698,7 +735,10 @@ try:
                         skip=_int("skip"),
                         cap=_int("cap"),
                         every=_int("every", 1),
+                        allow=path_access.is_allowed,
                     )
+            except PermissionError as e:
+                return web.json_response({"error": path_access.refusal(e.args[0])}, status=403)
             except ValueError as e:
                 return web.json_response({"error": str(e)}, status=404)
             except Exception as e:
@@ -709,22 +749,24 @@ try:
             if missing:
                 payload["warning"] = (
                     f"{len(missing)} file(s) referenced by the node are missing "
-                    f"from ./input")
+                    f"from ./input, or outside the folders the viewer may open")
             return web.json_response(payload)
 
         async def _bepic_health(_request):
             return web.json_response({"ok": True, "service": "bepic_templates"})
 
+        # Routes that change something on the machine — open Explorer, delete
+        # cache files — are POST only. A GET can be set off by a link or an <img>
+        # on any page the user has open; a JSON POST from another origin can't
+        # get past the browser without a CORS preflight.
         _safe_add("POST", "/bepic/open_path", _bepic_open_path)
-        _safe_add("GET", "/bepic/open_path", _bepic_open_path)
         _safe_add("POST", "/api/bepic/open_path", _bepic_open_path)
-        _safe_add("GET", "/api/bepic/open_path", _bepic_open_path)
         _safe_add("GET", "/bepic/raw_view", _bepic_raw_view)
         _safe_add("GET", "/api/bepic/raw_view", _bepic_raw_view)
         _safe_add("POST", "/bepic/probe_paths", _bepic_probe_paths)
         _safe_add("POST", "/api/bepic/probe_paths", _bepic_probe_paths)
-        _safe_add("GET", "/bepic/clear_cache", _bepic_clear_cache)
-        _safe_add("GET", "/api/bepic/clear_cache", _bepic_clear_cache)
+        _safe_add("POST", "/bepic/clear_cache", _bepic_clear_cache)
+        _safe_add("POST", "/api/bepic/clear_cache", _bepic_clear_cache)
         _safe_add("GET", "/bepic/browse", _bepic_browse)
         _safe_add("GET", "/api/bepic/browse", _bepic_browse)
         _safe_add("POST", "/bepic/browse_frames", _bepic_browse_frames)

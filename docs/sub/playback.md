@@ -31,13 +31,15 @@ Where the frame comes from depends on what the tab holds:
 | Tab | What happens | Where the file ends up |
 |---|---|---|
 | Image sequence | Nothing is written — that frame is already a file | stays where it is |
-| `mp4` / `mov` / `webm` | The frame is decoded server-side and written as a PNG | **next to the clip**, named `<clip>_f00042.png` |
+| `mp4` / `mov` / `webm` in ComfyUI's input, output or temp folder | The frame is decoded server-side and written as a PNG | **next to the clip**, named `<clip>_f00042.png` |
+| `mp4` / `mov` / `webm` anywhere else | The same | `output/extracted_frames/`, same name |
 | A clip dropped in from Explorer | The frame is read out of the player itself — the server never had the file | `output/extracted_frames/` |
 
 Notes:
 
+- The viewer only ever writes into ComfyUI's own folders. A clip in a project folder you [allowed](other.md#which-folders-the-viewer-can-open) can be played and extracted from, but its frames go to `output/extracted_frames/`, not beside it.
 - Extracting the same frame twice reuses the PNG already on disk rather than decoding again.
-- A clip whose own folder can't be written (a read-only mount, media served off another machine) falls back to `output/extracted_frames/` too.
+- A clip whose own folder can't be written (a read-only mount) falls back to `output/extracted_frames/` too.
 - Frames pulled from a clip in ComfyUI's `temp/` land in `temp/` beside it, and are cleaned up with the rest of it — the same as the clip the frame came from.
 - Extraction needs a video decoder: `imageio-ffmpeg` (which the save-to-output video formats already use) or `opencv-python`. Without either, the viewer says so instead of dropping an empty node.
 

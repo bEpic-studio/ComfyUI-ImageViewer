@@ -67,11 +67,16 @@ def _base_dirs(preferred=""):
     return dirs
 
 
-def resolve_path(raw, ann_type=""):
+def resolve_path(raw, ann_type="", allow=None):
     """Absolute existing path for a widget value, or None.
 
     Absolute values are used as-is; relative ones are looked up under ComfyUI's
     input/output/temp roots (the annotated type first) and finally the cwd.
+
+    `allow`, when given, is a path predicate: candidates it rejects are skipped
+    without being looked at on disk, and when it rejects every candidate this
+    raises PermissionError(first candidate) instead of answering None — so the
+    caller can say "not allowed" without having learned whether the file exists.
     """
     if not raw:
         return None
@@ -88,13 +93,19 @@ def resolve_path(raw, ann_type=""):
             candidates.append(os.path.join(d, value))
         candidates.append(value)
 
+    refused = []
     for cand in candidates:
         try:
             full = os.path.abspath(cand)
         except Exception:
             continue
+        if allow is not None and not allow(full):
+            refused.append(full)
+            continue
         if os.path.exists(full):
             return full
+    if refused and len(refused) == len(candidates):
+        raise PermissionError(refused[0])
     return None
 
 
@@ -350,11 +361,12 @@ def probe_video(path):
 # ── Single-frame extraction ──────────────────────────────────────────────────
 #
 # Pulling one frame out of a clip the viewer is playing, so it can be handed to
-# the graph as a still. The PNG is written NEXT TO the video it came from — that
-# is where the rest of that shot's media already lives, and it keeps the frame
-# addressable by a path loader rather than buried in a cache — falling back to
-# ./output/extracted_frames only when the video's own folder can't be written
-# (a read-only mount, or media served off another machine).
+# the graph as a still. For a clip in ComfyUI's own input/output/temp folders
+# the PNG is written NEXT TO the video — where the rest of that media already
+# lives, addressable by a path loader rather than buried in a cache. Anywhere
+# else it goes to ./output/extracted_frames: the request comes over HTTP, and a
+# route that writes files must not let a request pick the folder on the rest of
+# the disk. The same fallback catches a clip whose folder can't be written.
 
 _EXTRACT_DIR = "extracted_frames"
 
@@ -396,11 +408,13 @@ def extract_dir_fallback():
     return os.path.join(folder_paths.get_output_directory(), _EXTRACT_DIR)
 
 
-def _extract_targets(video_path, name):
-    """Where an extracted frame may be written, best first."""
+def _extract_targets(video_path, name, beside=True):
+    """Where an extracted frame may be written, best first. `beside` allows the
+    clip's own folder; the caller decides whether it is one the viewer may
+    write into."""
     targets = []
     folder = os.path.dirname(video_path)
-    if folder:
+    if folder and beside:
         targets.append(os.path.join(folder, name))
     try:
         targets.append(os.path.join(extract_dir_fallback(), name))
@@ -416,8 +430,9 @@ def extract_frame_name(video_path, index):
     return f"{stem}_f{int(index):05d}.png"
 
 
-def extract_frame(video_path, index):
-    """Write frame `index` of `video_path` out as a PNG and return its path.
+def extract_frame(video_path, index, beside=True):
+    """Write frame `index` of `video_path` out as a PNG and return its path —
+    next to the clip when `beside`, else in ./output/extracted_frames.
 
     A frame already extracted is handed back as it stands rather than decoded
     again, so dragging the same one out twice costs nothing. Raises ValueError
@@ -426,7 +441,7 @@ def extract_frame(video_path, index):
     from PIL import Image
 
     index = max(0, int(index))
-    targets = _extract_targets(video_path, extract_frame_name(video_path, index))
+    targets = _extract_targets(video_path, extract_frame_name(video_path, index), beside)
     if not targets:
         raise ValueError("nowhere to write the extracted frame")
     for dst in targets:
@@ -495,19 +510,24 @@ def _video_frame(path):
     return frame
 
 
-def resolve(raw, hint="", ann_type="", skip=0, cap=0, every=1):
+def resolve(raw, hint="", ann_type="", skip=0, cap=0, every=1, allow=None):
     """Turn a loader widget value into viewer tab descriptors.
 
     Returns a list of {label, kind, frames} — one entry per tab to open. Raises
-    ValueError with a user-facing message when nothing can be shown.
+    ValueError with a user-facing message when nothing can be shown, and
+    PermissionError when `allow` (see resolve_path) rejects the path.
     """
-    path = resolve_path(raw, ann_type)
+    path = resolve_path(raw, ann_type, allow)
     if not path:
         raise ValueError(f"could not find {raw!r} on disk "
                          f"(looked in ./input, ./output, ./temp and as an absolute path)")
 
     if os.path.isdir(path):
         images, videos = _list_dir(path)
+        # Videos are opened here to probe them and cut a poster, so one that is
+        # a link out of the allowed folder must not be. Images are only named.
+        if allow is not None:
+            videos = [p for p in videos if allow(p)]
         folder = os.path.basename(path.rstrip("\\/")) or path
         if images:
             images = _trim(images, skip, cap, every)
@@ -540,7 +560,7 @@ def resolve(raw, hint="", ann_type="", skip=0, cap=0, every=1):
     raise ValueError(f"{name!r} is not a supported image or video format")
 
 
-def resolve_files(files, ann_type="input", label=""):
+def resolve_files(files, ann_type="input", label="", allow=None):
     """Turn an explicit list of media files into viewer tab descriptors.
 
     For container-style loaders (AYON) that keep their media in a JSON blob
@@ -549,17 +569,25 @@ def resolve_files(files, ann_type="input", label=""):
     sequence — that is how the node batches them — while videos get a tab each.
 
     Returns (tabs, missing) so a partly-uploaded container still shows what it
-    can instead of failing outright.
+    can instead of failing outright. Files `allow` rejects count as missing;
+    when every file was rejected, PermissionError says so instead.
     """
-    resolved, missing = [], []
+    resolved, missing, refused = [], [], []
     for entry in files or []:
-        path = resolve_path(entry, ann_type or "input")
+        try:
+            path = resolve_path(entry, ann_type or "input", allow)
+        except PermissionError as e:
+            refused.append(e.args[0])
+            missing.append(str(entry))
+            continue
         if path and os.path.isfile(path):
             resolved.append(path)
         else:
             missing.append(str(entry))
 
     if not resolved:
+        if refused and len(refused) == len(missing):
+            raise PermissionError(refused[0])
         shown = ", ".join(missing[:3]) + ("…" if len(missing) > 3 else "")
         raise ValueError(f"none of the container's files are on disk: {shown}")
 

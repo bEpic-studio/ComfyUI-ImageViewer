@@ -320,7 +320,7 @@ export const UIMixin = {
             const url = envApi.apiURL('/bepic/clear_cache');
 
             try {
-                const res = await envFetch(url);
+                const res = await envFetch(url, { method: 'POST' });
                 if (!res.ok) throw new Error('Request failed');
                 const js = await res.json();
                 dlgWin.alert(`Cleared ${js.deleted || 0} files from bEpic temp cache.`);

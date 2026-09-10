@@ -20,9 +20,9 @@ bEpic ImageViewer is a custom node extension for [ComfyUI](https://github.com/co
 | **Playback & Timeline** | Play image sequences, set FPS, loop modes, scrub frames, select sub-ranges. |
 | **Exposure & Channels** | ±4 EV exposure slider. Isolate R/G/B channels for data inspection. |
 | **Parameter Panel** | Live widget values for the selected ComfyUI node — editable in the viewer. |
-| **File Browser** | Browse the disk in a panel, preview images and video, drag files into the viewer or onto the graph. |
+| **File Browser** | Browse ComfyUI's folders — and any you allow — in a panel, preview images and video, drag files into the viewer or onto the graph. |
 | **Send from Any Node** | Right-click a VHS / native / AYON loader → *Send to Image Viewer*, or any image-producing node to run just its branch. |
-| **Frame to Graph** | Shift-drag the timeline onto the graph for a Load Image node holding the frame on screen — a video frame is extracted to a PNG beside the clip. |
+| **Frame to Graph** | Shift-drag the timeline onto the graph for a Load Image node holding the frame on screen — a video frame is extracted to a PNG beside the clip, or to `output/extracted_frames` for clips outside ComfyUI's folders. |
 | **Dockable Panels** | Drag any panel by its title bar to either side of the picture, or stack it above another. Splitters between them, arrangement remembered. |
 | **Undock / Multi-Monitor** | Pop the viewer into its own browser window for a second screen. |
 

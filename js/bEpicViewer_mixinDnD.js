@@ -26,8 +26,9 @@
 //   3. Timeline → ComfyUI graph:  shift-drag off the timeline to take just the
 //      frame on screen. A frame of an image sequence is already a file and is
 //      referenced as it lies; a frame inside an mp4/mov is extracted to a PNG
-//      beside the clip (server-side, /bepic/extract_frame) and that file is what
-//      the loader points at. Either way the drop lands as a single-image loader
+//      (server-side, /bepic/extract_frame) — beside the clip when that is in
+//      ComfyUI's input/output/temp, in output/extracted_frames otherwise — and
+//      that file is what the loader points at. Either way the drop lands as a single-image loader
 //      through the same route as 2, replacement onto an existing node included.
 import { api } from "../../scripts/api.js";
 import { app } from "../../scripts/app.js";

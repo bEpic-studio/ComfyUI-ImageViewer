@@ -76,15 +76,18 @@ A node added this way gets a viewer tab of its own the next time the workflow ru
 
 The extension registers the following HTTP routes on the ComfyUI server. These are used internally by the viewer frontend but can also be called directly.
 
+Every route that takes a path only reaches ComfyUI's input, output and temp folders plus the folders you [allow](other.md#which-folders-the-viewer-can-open), and only writes into ComfyUI's own folders. Routes with a side effect are POST only, so a link or an image on another page can't set them off.
+
 | Method | Path | Purpose |
 |---|---|---|
-| GET / POST | `/bepic/open_path` | Open a folder path in the OS file explorer |
-| GET | `/bepic/raw_view?path=…` | Serve a bEpic temp PNG securely |
-| GET | `/bepic/view_file?path=…` | Serve an external image file |
-| GET | `/bepic/browse?path=…` | List one directory's sub-folders and media files (no path → ComfyUI's input folder) |
+| POST | `/bepic/open_path` | Open a folder under ComfyUI's output folder in the OS file explorer |
+| GET | `/bepic/raw_view?path=…` | Serve a file from ComfyUI's output or temp folder |
+| GET | `/bepic/view_file?path=…` | Serve a file from an allowed folder |
+| GET | `/bepic/browse?path=…` | List one allowed directory's sub-folders and media files (no path → ComfyUI's input folder) |
 | POST | `/bepic/browse_frames` | Turn browsed paths into viewer frames — fps, frame count and poster for videos |
-| GET | `/bepic/clear_cache` | Delete all `bEpic_*` temp files |
-| POST | `/bepic/extract_frame` | Write one frame of a clip out as a PNG beside it, and report where it landed |
+| POST | `/bepic/clear_cache` | Delete all `bEpic_*` temp files |
+| POST | `/bepic/extract_frame` | Write one frame of a clip out as a PNG and report where it landed |
+| POST | `/bepic/save_annotation` | Save an Annotation tool PNG to `output/annotations/` (decoded and re-encoded, so only an image is written) |
 | GET | `/bepic/viewer` | Standalone viewer-only HTML page |
 | GET | `/bepic/health` | Health check — returns 200 if running |
 

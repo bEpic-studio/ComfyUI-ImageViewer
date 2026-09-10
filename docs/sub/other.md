@@ -10,6 +10,22 @@ A panel inside the viewer that browses the disk, previews what it finds, and han
 
 It opens on **ComfyUI's input folder**, which the server reports, so it is the right folder even when ComfyUI runs on another machine.
 
+### Which folders the viewer can open
+
+Out of the box, the browser — and everything else in the viewer that opens a file by its path, such as **Send to Image Viewer** on a loader node — reaches **ComfyUI's input, output and temp folders**, and nothing else. A path outside them is refused with a message saying so.
+
+To open more — a project drive, a plates folder on a share — list the folders, one per line, in a file named `bepic_viewer_roots.txt` next to ComfyUI's `extra_model_paths.yaml`:
+
+```text
+# Folders the bEpic viewer may open, besides ComfyUI's own
+W:\
+\\fileserver\projects
+```
+
+Or set the `BEPIC_VIEWER_ROOTS` environment variable, folders separated by `;` on Windows (`:` elsewhere) — the handier form for a launcher such as AYON that sets up ComfyUI's environment. Both are read on every request, so an edit needs no restart.
+
+The limit exists because the viewer's file routes answer anything that can reach ComfyUI's port. It only governs what the *viewer* opens; a workflow's own loader nodes still load whatever path they are given.
+
 ### The panel
 
 Drag the title bar across the top to move the panel — see [Docking Panels](interface.md#docking-panels). Below it:
@@ -17,7 +33,7 @@ Drag the title bar across the top to move the panel — see [Docking Panels](int
 | Part | What it does |
 |---|---|
 | **↑** | Up one folder. <kbd>Backspace</kbd> does the same while the list has focus. |
-| **Go to…** | Jump to Input, Output, Temp, your home folder, or any drive. |
+| **Go to…** | Jump to Input, Output, Temp, or any folder you have [allowed](#which-folders-the-viewer-can-open). |
 | **⟳** | Re-read the folder — pick up files written since you last looked. |
 | **Path field** | Shows where you are; type or paste a path and press <kbd>Enter</kbd> to go there. |
 | **List** | Sub-folders and media files, ordered so `frame_2` comes before `frame_10`. Sizes on the right. <kbd>↑</kbd> <kbd>↓</kbd> walk it. |

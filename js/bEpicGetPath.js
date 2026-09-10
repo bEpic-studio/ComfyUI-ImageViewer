@@ -12,23 +12,20 @@ export function registerBepicGetPath(nodeType) {
             console.log("[bEpicGetPath] explorer button clicked", {paths_id, path_key, suffix});
             const url = api.apiURL("/bepic/open_path");
             console.log("[bEpicGetPath] requesting", url);
+            // POST only: the server no longer answers GET here, since opening a
+            // folder is a side effect a stray link must not be able to set off.
             fetch(url, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ paths_id, path_key, suffix }),
             })
-            .then(res => {
+            .then(async res => {
                 if (!res.ok) {
-                    // try GET as fallback when status not in 200-299
-                    return fetch(url + `?paths_id=${encodeURIComponent(paths_id)}&path_key=${encodeURIComponent(path_key)}&suffix=${encodeURIComponent(suffix)}`);
+                    const data = await res.json().catch(() => ({}));
+                    console.warn("[bEpicGetPath] open_path refused:", data.error || res.status);
                 }
-                return res;
             })
-            .catch(err => {
-                // network error: also attempt GET
-                fetch(url + `?paths_id=${encodeURIComponent(paths_id)}&path_key=${encodeURIComponent(path_key)}&suffix=${encodeURIComponent(suffix)}`)
-                    .catch(console.error);
-            });
+            .catch(console.error);
         });
     };
 }
