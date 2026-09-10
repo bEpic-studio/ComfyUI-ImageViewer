@@ -5,6 +5,7 @@ import { api } from "../../scripts/api.js";
 import { app } from "../../scripts/app.js";
 import { resolveViewerAction, viewerHelpRows } from "./bEpicViewer_keymap.js";
 import { isViewerSourceNode, senderTabInfo } from "./bEpicViewer_nodeTools.js";
+import { POPOUT_NAME } from "./bEpicViewer_mixinReconnect.js";
 
 export const UIMixin = {
 
@@ -216,8 +217,20 @@ export const UIMixin = {
             this.popoutWindow.close();
             this.restoreDock();
         } else {
-            this.popoutWindow = window.open("", "bEpicViewer", "width=800,height=600");
-            if (!this.popoutWindow) return;
+            const win = window.open("", POPOUT_NAME, "width=800,height=600");
+            if (win) this._undockInto(win);
+        }
+    },
+
+    // Move the viewer into `win`: a window the user just opened, or a popout a
+    // reloaded tab left behind and this tab is taking over (adoptOrphanPopout).
+    // Resolves true once the viewer is in it.
+    async _undockInto(win) {
+        if (this._undocking) return false;
+        this._undocking = true;
+        try {
+            if (!(await this._freshPopoutDocument(win))) return false;
+            this.popoutWindow = win;
 
             this.popoutWindow.document.title = "bEpic Viewer";
             this.shadowRoot.querySelectorAll('style').forEach(s => this.popoutWindow.document.head.appendChild(s.cloneNode(true)));
@@ -269,6 +282,12 @@ export const UIMixin = {
             // rescales the compare layer or the frame outline against it.
             this._watchViewportResize && this._watchViewportResize();
             this._afterViewportMoved && this._afterViewportMoved();
+            // Last, so it only starts watching once the viewer is actually in
+            // there: it is what notices this tab going away.
+            this._armPopoutWatchdog && this._armPopoutWatchdog(win);
+            return true;
+        } finally {
+            this._undocking = false;
         }
     },
 

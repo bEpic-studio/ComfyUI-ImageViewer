@@ -53,6 +53,16 @@
             <div id="img-frame"></div>
             <div id="compare-slider" class="slider-v"></div>
             <button id="rotate-btn" class="sprite-icon" style="display:none;" title="Toggle Compare Modes"></button>
+            <!-- Shown while ComfyUI is out of reach. The text is filled in by the
+                 viewer, or by the popout's own watchdog once the tab is gone
+                 (bEpicViewer_mixinReconnect.js). -->
+            <div id="reconnect-overlay" class="reconnect-overlay" role="status" aria-live="polite">
+                <div class="reconnect-box">
+                    <span class="reconnect-spinner"></span>
+                    <div class="reconnect-title">Reconnecting&#8230;</div>
+                    <div class="reconnect-detail"></div>
+                </div>
+            </div>
         </div>
         <div id="rail-splitter-right" class="rail-splitter" data-rail="right" title="Resize"></div>
         <div id="dock-right" class="dock-rail" data-rail="right"></div>

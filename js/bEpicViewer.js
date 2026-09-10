@@ -16,6 +16,7 @@ import { AnnotateMixin } from "./bEpicViewer_annotate.js";
 import { DnDMixin }      from "./bEpicViewer_mixinDnD.js";
 import { BrowserMixin }  from "./bEpicViewer_mixinBrowser.js";
 import { DockMixin }     from "./bEpicViewer_mixinDock.js";
+import { ReconnectMixin } from "./bEpicViewer_mixinReconnect.js";
 import { SendFromNodeMixin, registerSendToViewerMenu, sendSelectionToViewer } from "./bEpicViewer_sendFromNode.js";
 import {
     registerSendNode, registerToolNode, senderTabInfo, isViewerSourceNode,
@@ -429,6 +430,7 @@ class ViewerPanel extends HTMLElement {
         this.historyCompare      = null;
         this.restoreViewerState();
         this.startParamMonitor();
+        this._initReconnect();
     }
 
     //  Element reference cache 
@@ -1040,6 +1042,7 @@ Object.assign(
     BrowserMixin,
     DockMixin,
     SendFromNodeMixin,
+    ReconnectMixin,
 );
 
 if (!customElements.get("bepic-viewer-panel")) {
@@ -1144,6 +1147,11 @@ app.registerExtension({
         document.body.appendChild(globalViewerPanel);
         _setViewerPanelToggle(false, { syncDisplay: true });
         _updateActionBarButtonState();
+        // A reload takes back the popout the previous page left open, so the
+        // toolbar button has to show the viewer as on again.
+        globalViewerPanel.addEventListener("bepic-popout-adopted", () => {
+            _setViewerPanelToggle(true, { syncDisplay: false });
+        });
 
         if (_isViewerOnlyMode()) {
             _applyViewerOnlyMode(globalViewerPanel);

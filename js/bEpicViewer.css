@@ -174,6 +174,31 @@
     border: 1px solid #333; 
 }
 
+/* Lost ComfyUI. Dims the picture without blocking it: while the tab is alive
+   and only the server is gone, zoom, pan and history still work. */
+.reconnect-overlay {
+    position: absolute; inset: 0;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    pointer-events: none; z-index: 100;
+}
+.reconnect-overlay.visible { display: flex; }
+.reconnect-box {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    max-width: 80%; padding: 14px 22px; box-sizing: border-box;
+    background: rgba(20, 20, 20, 0.92); border: 1px solid #f60; border-radius: 6px;
+    text-align: center;
+}
+.reconnect-title  { color: #f60; font-size: 14px; font-weight: 600; }
+.reconnect-detail { color: #bbb; font-size: 12px; line-height: 1.4; }
+.reconnect-detail:empty { display: none; }
+.reconnect-spinner {
+    width: 18px; height: 18px; box-sizing: border-box;
+    border: 2px solid rgba(255, 102, 0, 0.25); border-top-color: #f60; border-radius: 50%;
+    animation: bepic-reconnect-spin 0.9s linear infinite;
+}
+@keyframes bepic-reconnect-spin { to { transform: rotate(360deg); } }
+
 .exposure-control {
     position: absolute;
     top: 10px;
