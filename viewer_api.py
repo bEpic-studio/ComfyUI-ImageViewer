@@ -2,6 +2,8 @@ import io
 import os
 import re
 import base64
+import subprocess
+import sys
 import traceback
 import folder_paths
 from server import PromptServer
@@ -755,12 +757,77 @@ try:
         async def _bepic_health(_request):
             return web.json_response({"ok": True, "service": "bepic_templates"})
 
+        def _is_local(request):
+            return (request.remote or "") in ("127.0.0.1", "::1", "localhost")
+
+        async def _bepic_reveal_info(request):
+            """Which file manager "Open in …" would open, and whether it would
+            open on the machine the page is looking at at all."""
+            return web.json_response({"platform": sys.platform,
+                                      "local": _is_local(request)})
+
+        async def _bepic_reveal(request):
+            """Show a history item in the server's file manager, file selected.
+
+            Takes a path, or ComfyUI's {filename, subfolder, type}. Same reach as
+            /bepic/view_file, and only for a page on this machine: a browser
+            elsewhere would pop a window on someone else's desktop.
+            """
+            if not _is_local(request):
+                return web.json_response(
+                    {"success": False, "error": "only available on this machine"}, status=403)
+            if request.content_type != "application/json":
+                return web.json_response(
+                    {"success": False, "error": "expected JSON"}, status=415)
+            try:
+                data = await request.json()
+            except Exception:
+                data = None
+            if not isinstance(data, dict):
+                return web.json_response({"success": False, "error": "bad request"}, status=400)
+
+            path = data.get("path")
+            if not path:
+                path = _resolve_comfy_ref(data.get("filename"), data.get("type"),
+                                          data.get("subfolder"))
+            if not path or not isinstance(path, str):
+                return web.json_response(
+                    {"success": False, "error": "missing path"}, status=400)
+            path = os.path.abspath(path)
+            if not path_access.is_allowed(path):
+                return web.json_response(
+                    {"success": False, "error": path_access.refusal(path)}, status=403)
+            if not os.path.exists(path):
+                return web.json_response(
+                    {"success": False, "error": "file not found"}, status=404)
+
+            try:
+                if sys.platform == "win32":
+                    if os.path.isdir(path):
+                        os.startfile(path)
+                    else:
+                        # Windows paths can't contain '"', so the quoting holds.
+                        subprocess.Popen(f'explorer /select,"{path}"')
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", "-R", path])
+                else:
+                    target = path if os.path.isdir(path) else os.path.dirname(path)
+                    subprocess.Popen(["xdg-open", target])
+            except Exception as e:
+                print(f"[bEpicViewer] reveal failed for {path}: {e}")
+                return web.json_response({"success": False, "error": str(e)}, status=500)
+            return web.json_response({"success": True})
+
         # Routes that change something on the machine — open Explorer, delete
         # cache files — are POST only. A GET can be set off by a link or an <img>
         # on any page the user has open; a JSON POST from another origin can't
         # get past the browser without a CORS preflight.
         _safe_add("POST", "/bepic/open_path", _bepic_open_path)
         _safe_add("POST", "/api/bepic/open_path", _bepic_open_path)
+        _safe_add("POST", "/bepic/reveal", _bepic_reveal)
+        _safe_add("POST", "/api/bepic/reveal", _bepic_reveal)
+        _safe_add("GET", "/bepic/reveal_info", _bepic_reveal_info)
+        _safe_add("GET", "/api/bepic/reveal_info", _bepic_reveal_info)
         _safe_add("GET", "/bepic/raw_view", _bepic_raw_view)
         _safe_add("GET", "/api/bepic/raw_view", _bepic_raw_view)
         _safe_add("POST", "/bepic/probe_paths", _bepic_probe_paths)

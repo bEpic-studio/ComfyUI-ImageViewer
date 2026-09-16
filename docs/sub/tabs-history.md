@@ -66,13 +66,13 @@ Selected thumbnails carry a blue ring and a dot in the corner. The selection bel
 Once several are selected:
 
 - **Drag any one of them** onto the node graph and the whole selection is dropped, one loader node per snapshot, cascaded so none lands hidden behind another. Dragging a thumbnail that is *not* in the selection drags just that one and leaves the selection alone.
-- **Press <kbd>Delete</kbd>** (with the viewer hovered) or use the context menu to remove them all in one go.
+- **Press <kbd>Shift</kbd>+<kbd>Delete</kbd>** (with the viewer hovered) or use the context menu to remove them all in one go.
 
 ### Deleting Snapshots
 
-With the viewer hovered and the history strip open, <kbd>Delete</kbd> removes the selected snapshots — or, when nothing is selected, the snapshot currently open in the viewer. Nothing on disk is touched. When there is nothing to delete the key is left alone, so it still reaches ComfyUI's own delete-selected-nodes behind the panel.
+With the viewer hovered and the history strip open, <kbd>Shift</kbd>+<kbd>Delete</kbd> removes the selected snapshots — or, when nothing is selected, the snapshot currently open in the viewer. Nothing on disk is touched. When there is nothing to delete the key is left alone.
 
-<kbd>Delete</kbd> is one of ComfyUI's own keys, so it ships without a registered binding and works only while the viewer is hovered. Assign your own combo in **Settings → Keybinding** (*bEpic Viewer: Delete Selected History Snapshots*) if you want it to work with the cursor elsewhere.
+A plain <kbd>Delete</kbd> is not used, so it always reaches ComfyUI's own delete-selected-nodes. The default binding only fires while the viewer is hovered. To change it, or to make it work with the cursor elsewhere, assign your own combo in **Settings → Keybinding** (*bEpic Viewer: Delete Selected History Snapshots*).
 
 ### History Context Menu
 
@@ -81,6 +81,7 @@ Right-click any thumbnail to open the context menu:
 | Menu Item | Effect |
 |---|---|
 | Copy Image Path | Copies the absolute file path of that snapshot to the clipboard |
+| Open in Explorer | Opens the snapshot's folder in the file manager with the file selected. Reads *Open in Finder* on macOS and *Open in File Manager* on Linux, following the OS ComfyUI runs on. Hidden for files dropped in from the desktop, and when the page isn't on the ComfyUI machine. Only works for [folders the viewer can open](other.md#which-folders-the-viewer-can-open) |
 | Remove from History | Deletes that snapshot from the strip (does not delete the file on disk) |
 | Remove *n* from History | Shown instead when you right-click inside a selection — removes all of them |
 

@@ -81,6 +81,8 @@ Every route that takes a path only reaches ComfyUI's input, output and temp fold
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/bepic/open_path` | Open a folder under ComfyUI's output folder in the OS file explorer |
+| POST | `/bepic/reveal` | Show a history item in the OS file manager, file selected (allowed folders only; requests from this machine only) |
+| GET | `/bepic/reveal_info` | The server's OS and whether the page is on the same machine, for the *Open in …* menu label |
 | GET | `/bepic/raw_view?path=…` | Serve a file from ComfyUI's output or temp folder |
 | GET | `/bepic/view_file?path=…` | Serve a file from an allowed folder |
 | GET | `/bepic/browse?path=…` | List one allowed directory's sub-folders and media files (no path → ComfyUI's input folder) |

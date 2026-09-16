@@ -5,10 +5,41 @@
 //   plain        — open that snapshot in the viewport (again to go back)
 //   Shift        — pin it against the open one as a two-snapshot compare
 //   Ctrl / Cmd   — add it to the multi-selection (+Shift for a range), which
-//                  Delete and the drag-to-graph handler then act on
+//                  Shift+Delete and the drag-to-graph handler then act on
 // Shift keeps compare because that is the older and more valuable gesture; the
 // selection is the one that had to find another modifier.
 import { api } from "../../scripts/api.js";
+
+// "Open in Explorer / Finder" opens the file manager of the machine ComfyUI runs
+// on, so the label follows the server's OS, not the browser's. Until the server
+// has answered, the browser's OS is the best guess (they're usually the same box).
+const _clientPlatform = (() => {
+    const p = ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '').toLowerCase();
+    if (p.startsWith('win')) return 'win32';
+    if (p.startsWith('mac')) return 'darwin';
+    return 'linux';
+})();
+const _revealInfo = { platform: _clientPlatform, local: true };
+fetch(api.apiURL('/bepic/reveal_info'))
+    .then(res => res.ok ? res.json() : null)
+    .then(info => { if (info) Object.assign(_revealInfo, info); })
+    .catch(() => {});
+
+function _revealLabel() {
+    if (_revealInfo.platform === 'win32') return 'Open in Explorer';
+    if (_revealInfo.platform === 'darwin') return 'Open in Finder';
+    return 'Open in File Manager';
+}
+
+/** What /bepic/reveal needs to find a history frame on disk, or null if it isn't on disk. */
+function _revealRequest(imgObj) {
+    if (!imgObj || imgObj.dropped) return null;
+    if (imgObj.path) return { path: imgObj.path };
+    if (imgObj.filename) {
+        return { filename: imgObj.filename, subfolder: imgObj.subfolder || '', type: imgObj.type || 'output' };
+    }
+    return null;
+}
 
 // Snapshots kept per tab. With clip caching on, this is also how many videos can
 // be held in RAM by history alone, so falling off the end has to release them.
@@ -644,6 +675,27 @@ export const HistoryMixin = {
         };
         menu.appendChild(item);
 
+        const reveal = _revealRequest(imgObj);
+        if (reveal && _revealInfo.local) {
+            const revealItem = doc.createElement('div');
+            revealItem.className = 'thumb-ctx-item';
+            revealItem.textContent = `📂 ${_revealLabel()}`;
+            revealItem.onclick = (e) => {
+                e.stopPropagation();
+                menu.remove();
+                fetch(api.apiURL('/bepic/reveal'), {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify(reveal),
+                }).then(async (res) => {
+                    if (res.ok) return;
+                    const data = await res.json().catch(() => ({}));
+                    console.warn('bEpicViewer: could not open the file location:', data.error || res.status);
+                }).catch((err) => console.warn('bEpicViewer: could not open the file location', err));
+            };
+            menu.appendChild(revealItem);
+        }
+
         // Right-clicking inside a selection acts on all of it; right-clicking
         // outside one acts on the item under the cursor, as it always did.
         const batch = this.isHistoryItemSelected(key, idx)
@@ -682,7 +734,7 @@ export const HistoryMixin = {
     },
 
     /**
-     * What the Delete hotkey removes: the multi-selection when there is one,
+     * What the Shift+Delete hotkey removes: the multi-selection when there is one,
      * otherwise the snapshot currently open in the viewer. Does nothing when
      * neither applies, so the key falls through to whatever else wants it.
      */
@@ -701,7 +753,7 @@ export const HistoryMixin = {
         return false;
     },
 
-    /** True when Delete has something to act on -- see deleteSelectedHistory. */
+    /** True when Shift+Delete has something to act on -- see deleteSelectedHistory. */
     hasDeletableHistory() {
         const key = this.activeTab;
         if (this.historySelectionIndices(key).length > 0) return true;
