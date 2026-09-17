@@ -26,7 +26,7 @@ Turn on **save_to_output** on the send node and the model is written the way **S
 - a `MESH` is saved as **GLB**, one file per batch item, with its UVs, colours, normals, textures and material;
 - a 3D file keeps its own format, so an **FBX stays an FBX**. The viewer doesn't convert between formats; ComfyUI has no FBX writer.
 
-Files are named `<filename_prefix>_00001_.glb` (use a prefix like `3d/ComfyUI` to land them in `output/3d`), carry the workflow in the GLB's metadata unless ComfyUI runs with `--disable-metadata`, and show up in ComfyUI's history and assets like Save 3D Model's. `file_format` and `fps` don't apply to models.
+Files are named `<filename_prefix>_00001_.glb` (use a prefix like `3d/ComfyUI` to land them in `output/3d`), carry the workflow in the GLB's metadata unless ComfyUI runs with `--disable-metadata`. Like the node's other saves, they aren't previewed on the node itself. `file_format` and `fps` don't apply to models.
 
 With **save_to_output** off, the model is only previewed from ComfyUI's temp folder.
 

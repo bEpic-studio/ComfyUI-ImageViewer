@@ -448,24 +448,22 @@ class bEpicSendToViewer:
 
     def _send_model(self, mesh, label, save_to_output, filename_prefix,
                     unique_id, prompt, extra_pnginfo):
-        frames, ui_3d = [], []
+        frames = []
         try:
             if save_to_output:
-                _saved, ui_3d, frames = model_writer.save_model_input(
+                _saved, _ui, frames = model_writer.save_model_input(
                     mesh, filename_prefix, prompt, extra_pnginfo)
             else:
                 frames = _model_frames(mesh, label, unique_id, self.output_dir)
         except Exception as e:
-            print(f"[91m[bEpicSendToViewer] 3D input failed: {e}[0m")
+            print(f"\033[91m[bEpicSendToViewer] 3D input failed: {e}\033[0m")
 
         PromptServer.instance.send_sync("bepic.viewer.update", {
             "tabs": {"tab": frames},
             "unique_id": unique_id,
         })
-        # ui["3d"] is what Save 3D Model reports, so the saved files are recorded
-        # in ComfyUI's history the same way.
-        if ui_3d:
-            return {"ui": {"3d": ui_3d}, "result": (mesh, )}
+        # No `ui` for the same reason as send(): the model belongs in the viewer,
+        # not in a preview on the node.
         return (mesh, )
 
 
