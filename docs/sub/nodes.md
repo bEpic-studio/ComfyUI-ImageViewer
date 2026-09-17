@@ -6,12 +6,14 @@
 
 ## bEpic Send To Image Viewer
 
-Sends images to the Image Viewer. Lay down the node in the canvas, connect an image / mask to the node's input, and set the tab_name to any name you want.
+Sends images, videos and 3D models to the Image Viewer. Lay down the node in the canvas, connect an image / mask to the node's input, and set the tab_name to any name you want.
 If you don't specify a name, the name of the connected node will be used.
 
 Its only output is `image` — the input passed straight through.
 
 Turn on **save_to_output** and the frames are also written to ComfyUI's output directory in the format you pick (png, exr, tiff, jpg, dpx, mp4, mov, webm, ...) rather than only reaching the viewer as temp files.
+
+A `MESH` or 3D file input opens as a [3D tab](models-3d.md) instead, and **save_to_output** writes it the way ComfyUI's Save 3D Model does: meshes as GLB, 3D files in their own format.
 
 Saved PNGs carry the ComfyUI workflow in their text chunks, exactly as SaveImage writes it, so dropping one back onto the canvas rebuilds the graph that made it. A video container can't hold that, so video outputs get it in a same-named companion PNG — which doubles as the clip's thumbnail in the viewer's history. Starting ComfyUI with `--disable-metadata` switches this off, the same as it does for the standard save nodes.
 
@@ -87,6 +89,8 @@ Every route that takes a path only reaches ComfyUI's input, output and temp fold
 | GET | `/bepic/view_file?path=…` | Serve a file from an allowed folder |
 | GET | `/bepic/browse?path=…` | List one allowed directory's sub-folders and media files (no path → ComfyUI's input folder) |
 | POST | `/bepic/browse_frames` | Turn browsed paths into viewer frames — fps, frame count and poster for videos |
+| POST | `/bepic/model_thumb` | Keep the viewer's rendering of a model as its history thumbnail (decoded and re-encoded; allowed folders only) |
+| GET | `/bepic/lib/three/<file>` | The bundled three.js files for 3D tabs |
 | POST | `/bepic/clear_cache` | Delete all `bEpic_*` temp files |
 | POST | `/bepic/extract_frame` | Write one frame of a clip out as a PNG and report where it landed |
 | POST | `/bepic/save_annotation` | Save an Annotation tool PNG to `output/annotations/` (decoded and re-encoded, so only an image is written) |

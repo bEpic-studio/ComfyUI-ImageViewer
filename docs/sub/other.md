@@ -82,14 +82,14 @@ For a loader, it works with whatever the node keeps in its widget — no rewirin
 Notes:
 
 - Directory loaders honour the node's `skip_first_images` / `image_load_cap` / `select_every_nth` widgets, so the viewer shows exactly the frames the node will feed downstream.
-- AYON containers open exactly what the node loads: a multi-frame **AYON Load Image** becomes one scrubbable sequence, **AYON Load Video** shows the first entry (the only one it uses), and **AYON Load 3D Model** gets no menu entry since there is nothing to display. If part of a container has not been uploaded to `./input`, the rest still opens and the console notes what was missing.
+- AYON containers open exactly what the node loads: a multi-frame **AYON Load Image** becomes one scrubbable sequence, **AYON Load Video** shows the first entry (the only one it uses), and **AYON Load 3D Model** opens its models as [3D tabs](models-3d.md). If part of a container has not been uploaded to `./input`, the rest still opens and the console notes what was missing.
 - Videos are probed for their real frame rate and length, so the timeline is frame-accurate.
 - Sending again from the same node reuses that node's tab and pushes the previous media onto its [history strip](tabs-history.md#history-snapshots), rather than piling up tabs.
 - Formats a browser can't display (`exr`, `tiff`, `dpx`, …) are converted to a PNG preview on the fly — only for the frames you actually look at, so long sequences open instantly.
 
 ### Nodes with no file: run branch
 
-Any node carrying an `IMAGE`, `MASK` or `VIDEO` output — a VAE Decode, an upscaler, a mask op — can be viewed too. Since there is no file to read, choosing **Send to Image Viewer (run branch)** queues the branch feeding that node once through the normal ComfyUI queue and shows the result.
+Any node carrying an `IMAGE`, `MASK`, `VIDEO`, `MESH` or 3D-file output — a VAE Decode, an upscaler, a mask op — can be viewed too. Since there is no file to read, choosing **Send to Image Viewer (run branch)** queues the branch feeding that node once through the normal ComfyUI queue and shows the result.
 
 - **Only the branch runs.** The prompt is pruned to the node and its upstream dependencies, so the workflow's other output nodes are left out — viewing a node never writes files as a side effect.
 - **Your graph is never touched.** The capture node is added to the queued prompt only, so node ids, wiring and undo history stay exactly as they were.

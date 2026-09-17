@@ -24,6 +24,7 @@ bEpic ImageViewer is a custom node extension for [ComfyUI](https://github.com/co
 | **Send from Any Node** | Right-click a VHS / native / AYON loader → *Send to Image Viewer*, or any image-producing node to run just its branch. |
 | **Frame to Graph** | Shift-drag the timeline onto the graph for a Load Image node holding the frame on screen — a video frame is extracted to a PNG beside the clip, or to `output/extracted_frames` for clips outside ComfyUI's folders. |
 | **Dockable Panels** | Drag any panel by its title bar to either side of the picture, or stack it above another. Splitters between them, arrangement remembered. |
+| **3D Models** | View GLB, glTF, FBX, OBJ, STL and PLY like ComfyUI's Save 3D Model does, and save meshes and 3D files from the send node. |
 | **Undock / Multi-Monitor** | Pop the viewer into its own browser window for a second screen. |
 
 ## How It Works
@@ -50,6 +51,7 @@ All viewer state — open tabs, history stacks, panel positions, layouts — is 
 | [Playback Controls](sub/playback.md) | Playing sequences, timeline scrubbing, loop modes, sub-range |
 | [Channels & Exposure](sub/channels-exposure.md) | Exposure slider, RGB isolation, interactive E-drag |
 | [Parameter Panel](sub/params-panel.md) | Live node params, lock, dock, resize |
+| [3D Models](sub/models-3d.md) | Viewing and saving meshes and 3D files |
 | [Other Features](sub/other.md) | File browser, send from loader nodes, undocking, layouts, cache management |
 | [Node Reference](sub/nodes.md) | Full input/output spec for the bEpicSendToViewer node |
 | [Keyboard Shortcuts](sub/hotkeys.md) | Complete hotkey reference, and how to rebind the keys in ComfyUI's keybinding editor |

@@ -369,11 +369,8 @@ export class Model3DView {
         if (format === "glb" || format === "gltf") {
             const gltf = await new GLTFLoader(manager).parseAsync(buffer, RES_PREFIX);
             gltf.scene.traverse((c) => {
-                // Save 3D Model writes no normals unless the mesh carries them;
-                // ComfyUI's viewer computes them, so a bare mesh shades smoothly.
-                if (c.isMesh && c.geometry && !c.geometry.getAttribute("normal")) {
-                    c.geometry.computeVertexNormals();
-                }
+                // A GLB without normals (Save 3D Model writes none unless the mesh
+                // has them) is shaded flat, as glTF requires and ComfyUI shows it.
                 if (c.isSkinnedMesh) c.frustumCulled = false;
             });
             return { object: gltf.scene, animations: gltf.animations || [] };
@@ -405,7 +402,7 @@ export class Model3DView {
                 geom.computeBoundingBox();
                 const size = geom.boundingBox.getSize(new THREE.Vector3()).length() || 1;
                 group.add(new THREE.Points(geom, new THREE.PointsMaterial({
-                    size: size / 500, vertexColors: colors, color: colors ? 0xffffff : 0xcccccc,
+                    size: size / 200, vertexColors: colors, color: colors ? 0xffffff : 0xcccccc,
                 })));
             }
             return { object: group, animations: [] };
