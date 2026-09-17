@@ -27,6 +27,8 @@ except Exception:  # pragma: no cover - file_writer is optional
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif", ".ico",
               ".svg", ".tif", ".tiff", ".exr", ".dpx", ".tga", ".hdr"}
+# 3D formats a viewer tab can show (see model_writer.VIEWABLE_EXTS).
+MODEL_EXTS = {".glb", ".gltf", ".fbx", ".obj", ".stl", ".ply"}
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".webm", ".mkv", ".ogv", ".avi", ".mpg",
               ".mpeg", ".wmv", ".flv"}
 
@@ -500,6 +502,11 @@ def _image_frame(path):
     return {"path": path, "name": os.path.basename(path), "external": True}
 
 
+def _model_frame(path):
+    return {"kind": "model", "format": os.path.splitext(path)[1][1:].lower(),
+            "path": path, "name": os.path.basename(path), "external": True}
+
+
 def _video_frame(path):
     fps, frames = probe_video(path)
     frame = {
@@ -560,6 +567,8 @@ def resolve(raw, hint="", ann_type="", skip=0, cap=0, every=1, allow=None):
         return [{"label": name, "kind": "video", "frames": [_video_frame(path)]}]
     if ext in IMAGE_EXTS:
         return [{"label": name, "kind": "image", "frames": [_image_frame(path)]}]
+    if ext in MODEL_EXTS:
+        return [{"label": name, "kind": "model", "frames": [_model_frame(path)]}]
 
     # Unknown extension — the widget hint decides whether to try it as a video.
     if "video" in (hint or "").lower():
@@ -600,6 +609,7 @@ def resolve_files(files, ann_type="input", label="", allow=None):
 
     images = [p for p in resolved if os.path.splitext(p)[1].lower() in IMAGE_EXTS]
     videos = [p for p in resolved if os.path.splitext(p)[1].lower() in VIDEO_EXTS]
+    models = [p for p in resolved if os.path.splitext(p)[1].lower() in MODEL_EXTS]
 
     if images:
         name = label or os.path.basename(images[0])
@@ -612,7 +622,9 @@ def resolve_files(files, ann_type="input", label="", allow=None):
     elif videos:
         tabs = [{"label": label or os.path.basename(p), "kind": "video",
                  "frames": [_video_frame(p)]} for p in videos]
+    elif models:
+        tabs = [{"label": label or os.path.basename(p), "kind": "model",
+                 "frames": [_model_frame(p)]} for p in models]
     else:
-        raise ValueError("nothing viewable in the container — 3D models and "
-                         "other non-image formats can't be shown")
+        raise ValueError("nothing viewable in the container")
     return tabs, missing

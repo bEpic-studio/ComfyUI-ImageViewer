@@ -22,6 +22,11 @@ try:
 except Exception:
     file_writer = None
 
+try:
+    from . import model_writer
+except Exception:
+    model_writer = None
+
 
 _ANY = IO.ANY if IO is not None else "IMAGE"
 
@@ -309,6 +314,16 @@ def _temp_frames(inp, label, unique_id, out_dir, temp_type):
     return batch_results
 
 
+def _model_frames(inp, label, unique_id, out_dir):
+    """Preview a MESH / File3D in the temp dir, under the same run-token scheme
+    as _temp_frames so older runs are collected the same way."""
+    prefix = _run_group_prefix(unique_id, label)
+    run_tag = uuid.uuid4().hex[:_RUN_TAG_LEN]
+    frames = model_writer.preview_model_input(inp, out_dir, prefix, run_tag)
+    _gc_temp_runs(out_dir, prefix, run_tag)
+    return frames
+
+
 def _push_tab(inp, tab_name, unique_id, node_label):
     """Show `inp` in its own viewer tab, as a preview only.
 
@@ -382,6 +397,12 @@ class bEpicSendToViewer:
              unique_id=None, prompt=None, extra_pnginfo=None):
         safe_label = tab_name.replace(" ", "_") if tab_name else "send"
 
+        # A MESH or 3D file opens as a 3D tab, and "save to output" writes it
+        # the way core's Save 3D Model does (file_format doesn't apply).
+        if model_writer is not None and model_writer.is_model_input(input):
+            return self._send_model(input, safe_label, save_to_output,
+                                    filename_prefix, unique_id, prompt, extra_pnginfo)
+
         # Three source kinds feed the viewer tab:
         #   • a ComfyUI VIDEO object   → decoded to a playable file and shown as
         #     a <video> (always, even with the toggle off — it can't preview as
@@ -424,6 +445,28 @@ class bEpicSendToViewer:
         # node's picture belongs in the Image Viewer panel, not on the node
         # itself. The viewer already got it above, over the websocket.
         return (input, )
+
+    def _send_model(self, mesh, label, save_to_output, filename_prefix,
+                    unique_id, prompt, extra_pnginfo):
+        frames, ui_3d = [], []
+        try:
+            if save_to_output:
+                _saved, ui_3d, frames = model_writer.save_model_input(
+                    mesh, filename_prefix, prompt, extra_pnginfo)
+            else:
+                frames = _model_frames(mesh, label, unique_id, self.output_dir)
+        except Exception as e:
+            print(f"[91m[bEpicSendToViewer] 3D input failed: {e}[0m")
+
+        PromptServer.instance.send_sync("bepic.viewer.update", {
+            "tabs": {"tab": frames},
+            "unique_id": unique_id,
+        })
+        # ui["3d"] is what Save 3D Model reports, so the saved files are recorded
+        # in ComfyUI's history the same way.
+        if ui_3d:
+            return {"ui": {"3d": ui_3d}, "result": (mesh, )}
+        return (mesh, )
 
 
 class bEpicImageViewerRoto:

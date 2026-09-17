@@ -15,6 +15,25 @@ try:
 except Exception:  # pragma: no cover - viewer still works without the resolver
     media_resolve = None
 
+try:
+    from . import model_writer
+except Exception:  # pragma: no cover
+    model_writer = None
+
+_MODEL_EXTS = {".glb", ".gltf", ".fbx", ".obj", ".stl", ".ply"}
+
+# three.js and its loaders, for the viewer's 3D tabs. Outside js/ so ComfyUI
+# doesn't import them at startup; served by /bepic/lib/three/<name> instead.
+_THREE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor", "three")
+
+# Stands in for a model's history tile until the browser has rendered one.
+_MODEL_PLACEHOLDER_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+    '<rect width="64" height="64" fill="#2a2a2a"/>'
+    '<g fill="none" stroke="#9a9a9a" stroke-width="2" stroke-linejoin="round">'
+    '<path d="M32 12 50 22v20L32 52 14 42V22z"/><path d="M14 22l18 10 18-10M32 32v20"/>'
+    '</g></svg>')
+
 
 def _decode_image_upload(dataurl, force_png=False):
     """(bytes, ext) to write for an uploaded data: URL.
@@ -400,6 +419,8 @@ try:
                     kind = "image"
                 elif ext in video_exts:
                     kind = "video"
+                elif ext in _MODEL_EXTS:
+                    kind = "model"
                 else:
                     continue
                 if len(files) >= _BROWSE_FILE_CAP:
@@ -456,7 +477,9 @@ try:
                     continue
                 ext = os.path.splitext(p)[1].lower()
                 try:
-                    if ext in video_exts:
+                    if ext in _MODEL_EXTS:
+                        frames.append(media_resolve._model_frame(p))
+                    elif ext in video_exts:
                         frames.append(media_resolve._video_frame(p))
                     elif ext in image_exts:
                         frames.append(media_resolve._image_frame(p))
@@ -509,6 +532,16 @@ try:
                 return web.Response(status=403, text=path_access.refusal(path))
             if not os.path.isfile(path):
                 return web.Response(status=404, text="file not found")
+
+            if os.path.splitext(path)[1].lower() in _MODEL_EXTS:
+                # A model's tile is rendered by the browser (/bepic/model_thumb);
+                # until then, a generic cube. Neither may be cached for long:
+                # the real one replaces the placeholder under the same URL.
+                thumb = model_writer.cached_thumb(path) if model_writer else None
+                if thumb:
+                    return web.FileResponse(thumb, headers={"Cache-Control": "no-cache"})
+                return web.Response(text=_MODEL_PLACEHOLDER_SVG, content_type="image/svg+xml",
+                                    headers={"Cache-Control": "no-store"})
 
             if media_resolve is not None:
                 try:
@@ -757,6 +790,52 @@ try:
         async def _bepic_health(_request):
             return web.json_response({"ok": True, "service": "bepic_templates"})
 
+        async def _bepic_three(request):
+            name = request.match_info.get("name", "")
+            try:
+                allowed = set(os.listdir(_THREE_DIR))
+            except OSError:
+                allowed = set()
+            if name not in allowed or not name.endswith(".js"):
+                return web.Response(status=404, text="not found")
+            return web.FileResponse(os.path.join(_THREE_DIR, name), headers={
+                "Content-Type": "text/javascript; charset=utf-8",
+                "Cache-Control": "max-age=86400",
+            })
+
+        async def _bepic_model_thumb(request):
+            """Keep the browser's rendering of a model as its history tile."""
+            if model_writer is None:
+                return web.json_response({"error": "unavailable"}, status=500)
+            try:
+                data = await request.json()
+            except Exception:
+                data = None
+            if not isinstance(data, dict) or not isinstance(data.get("path"), str):
+                return web.json_response({"error": "bad request"}, status=400)
+            path = os.path.abspath(data["path"])
+            if os.path.splitext(path)[1].lower() not in _MODEL_EXTS:
+                return web.json_response({"error": "not a 3D model"}, status=400)
+            if not path_access.is_allowed(path):
+                return web.json_response({"error": path_access.refusal(path)}, status=403)
+            if not os.path.isfile(path):
+                return web.json_response({"error": "file not found"}, status=404)
+            dataurl = data.get("dataurl")
+            if not isinstance(dataurl, str) or len(dataurl) > 3 * 1024 * 1024:
+                return web.json_response({"error": "thumbnail missing or too large"}, status=400)
+            try:
+                raw, _ext = _decode_image_upload(dataurl, force_png=True)
+            except ValueError as e:
+                return web.json_response({"error": str(e)}, status=400)
+            dst = model_writer.thumb_cache_path(path)
+            try:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                with open(dst, "wb") as fh:
+                    fh.write(raw)
+            except OSError as e:
+                return web.json_response({"error": str(e)}, status=500)
+            return web.json_response({"ok": True})
+
         def _is_local(request):
             return (request.remote or "") in ("127.0.0.1", "::1", "localhost")
 
@@ -824,6 +903,10 @@ try:
         # get past the browser without a CORS preflight.
         _safe_add("POST", "/bepic/open_path", _bepic_open_path)
         _safe_add("POST", "/api/bepic/open_path", _bepic_open_path)
+        _safe_add("GET", "/bepic/lib/three/{name}", _bepic_three)
+        _safe_add("GET", "/api/bepic/lib/three/{name}", _bepic_three)
+        _safe_add("POST", "/bepic/model_thumb", _bepic_model_thumb)
+        _safe_add("POST", "/api/bepic/model_thumb", _bepic_model_thumb)
         _safe_add("POST", "/bepic/reveal", _bepic_reveal)
         _safe_add("POST", "/api/bepic/reveal", _bepic_reveal)
         _safe_add("GET", "/bepic/reveal_info", _bepic_reveal_info)
