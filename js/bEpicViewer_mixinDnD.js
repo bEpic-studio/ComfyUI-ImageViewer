@@ -35,6 +35,7 @@ import { app } from "../../scripts/app.js";
 
 const _IMG_RE = /\.(png|jpe?g|webp|gif|bmp|avif|tiff?|svg|ico)$/i;
 const _VID_RE = /\.(mp4|m4v|mov|webm|mkv|ogv|avi)$/i;
+const _MODEL_RE = /\.(glb|gltf|fbx|obj|stl|ply)$/i;
 
 // How far each node of a multi-item drop is stepped from the last, so a
 // batch lands as a readable cascade instead of one unreachable pile.
@@ -109,6 +110,7 @@ export const DnDMixin = {
                 const f = { url: it.url, name: it.filename || "file",
                             filename: it.filename || null, external: true, dropped: true };
                 if (it.kind === "video") { f.kind = "video"; f.fps = this.fps || 24; }
+                if (it.kind === "model") { f.kind = "model"; f.format = it.format || null; }
                 frames.push(f);
                 continue;
             }
@@ -161,14 +163,16 @@ export const DnDMixin = {
     },
 
     _addDroppedFiles(files) {
-        const images = [], videos = [];
+        const images = [], videos = [], models = [];
         for (const f of files) {
-            const isVid = (f.type && f.type.startsWith("video/")) || _VID_RE.test(f.name);
-            const isImg = (f.type && f.type.startsWith("image/")) || _IMG_RE.test(f.name);
-            if (isVid) videos.push(f);
+            const isModel = _MODEL_RE.test(f.name);
+            const isVid = !isModel && ((f.type && f.type.startsWith("video/")) || _VID_RE.test(f.name));
+            const isImg = !isModel && ((f.type && f.type.startsWith("image/")) || _IMG_RE.test(f.name));
+            if (isModel) models.push(f);
+            else if (isVid) videos.push(f);
             else if (isImg) images.push(f);
         }
-        if (!images.length && !videos.length) return;
+        if (!images.length && !videos.length && !models.length) return;
 
         let firstKey = null;
 
@@ -193,6 +197,20 @@ export const DnDMixin = {
             firstKey = firstKey || key;
             // <img> can't render a video file — extract a poster frame for the strip.
             this._generateDroppedVideoPoster(frame);
+        }
+
+        // One tab per model, like videos. Files a .gltf or .obj refers to can't
+        // be reached from a dropped file, so those show without them.
+        for (const f of models) {
+            const key   = `dropped_${Date.now()}_${++this._dropSeq}`;
+            const frame = this._frameForDroppedFile(f, false);
+            delete frame.path;
+            frame.kind = "model";
+            frame.format = _MODEL_RE.exec(f.name)[1].toLowerCase();
+            this.allTabs[key]   = [frame];
+            this.history[key]   = [[frame]];
+            this.tabLabels[key] = `📥 ${f.name}`;
+            firstKey = firstKey || key;
         }
 
         const allKeys = Object.keys(this.allTabs);
@@ -292,7 +310,9 @@ export const DnDMixin = {
             type:      imgObj.type || null,
             external:  !!imgObj.external,
             dropped:   !!imgObj.dropped,
-            kind:      imgObj.kind || (this._frameIsVideo(imgObj) ? "video" : "image"),
+            kind:      this._frameIsModel(imgObj) ? "model"
+                     : imgObj.kind || (this._frameIsVideo(imgObj) ? "video" : "image"),
+            format:    imgObj.format || null,
             thumb:     imgObj.thumb || null,
             isSequence: !!(seq && seq.dir),
             seqDir:     seq ? seq.dir : null,
@@ -550,6 +570,18 @@ export const DnDMixin = {
             // the drop misses, hits an unrelated node, or the media types differ.
             // Only for a single item: a node has one file, so a batch has nothing
             // to say about which of them should replace it.
+            // Models go to core's Load 3D node instead of an image loader.
+            if (list.some((p) => p.kind === "model")) {
+                const target = list.length === 1 ? this._nodeUnderEvent(e) : null;
+                let offset = [0, 0];
+                for (const payload of list) {
+                    if (payload.kind !== "model") continue;
+                    await this._dropModelOntoGraph(payload, e, offset, target);
+                    offset = [offset[0] + DROP_CASCADE, offset[1] + DROP_CASCADE];
+                }
+                return;
+            }
+
             if (list.length === 1) {
                 const payload = list[0];
                 const target = this._nodeUnderEvent(e);

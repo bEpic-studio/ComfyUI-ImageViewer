@@ -30,11 +30,12 @@ import { nodeToolKind, senderTabInfo } from "./bEpicViewer_nodeTools.js";
 
 const IMG_EXT = /\.(png|jpe?g|webp|gif|bmp|avif|tiff?|exr|dpx|tga|hdr|svg|ico)$/i;
 const VID_EXT = /\.(mp4|m4v|mov|webm|mkv|ogv|avi|mpe?g|wmv|flv)$/i;
+const MODEL_EXT = /\.(glb|gltf|fbx|obj|stl|ply)$/i;
 
 // Widget names loaders keep their media in, most specific first — a node with
 // both `video` and `path` widgets should be read from `video`.
 const MEDIA_WIDGETS = [
-    "video", "video_path", "video_file", "image", "image_path", "images",
+    "video", "video_path", "video_file", "image", "image_path", "images", "model_file",
     "file", "file_path", "filepath", "path", "filename", "directory", "folder",
 ];
 
@@ -51,11 +52,11 @@ const TRIM_WIDGETS = { skip: "skip_first_images", cap: "image_load_cap", every: 
 // entry uploaded into ComfyUI's ./input.
 const AYON_WIDGET      = "ayon_container_info";
 const AYON_VIDEO_NODE  = "AYON Load Video";        // loads only the first entry
-const AYON_SKIP_NODES  = new Set(["AYON Load 3D Model"]);   // nothing to show
+const AYON_SKIP_NODES  = new Set();
 
 // Slot types the viewer can display. A node carrying one of these can be sent
 // even with no file of its own, by running the branch that feeds it.
-const VIEWABLE_TYPES = new Set(["IMAGE", "MASK", "VIDEO"]);
+const VIEWABLE_TYPES = new Set(["IMAGE", "MASK", "VIDEO", "MESH"]);
 
 // This extension's own node, used as a throwaway sink in the queued prompt.
 const SEND_NODE = "bEpicSendToViewer";
@@ -77,7 +78,7 @@ function looksLikeMedia(w) {
     if (!raw) return false;
     if (DIR_WIDGETS.has(w.name)) return true;
     const { value } = stripAnnotation(raw);
-    return IMG_EXT.test(value) || VID_EXT.test(value);
+    return IMG_EXT.test(value) || VID_EXT.test(value) || MODEL_EXT.test(value);
 }
 
 /** The widget holding this node's media, or null when it has none. */
@@ -124,7 +125,11 @@ export function findAyonMedia(node) {
  */
 export function findViewableTarget(node) {
     const title = (node && (node.title || node.type)) || "node";
-    const viewable = (t) => VIEWABLE_TYPES.has(String(t || "").toUpperCase());
+    // FILE_3D, FILE_3D_GLB, FILE_3D_FBX, ... are all 3D files the viewer shows.
+    const viewable = (t) => {
+        const u = String(t || "").toUpperCase();
+        return VIEWABLE_TYPES.has(u) || u === "FILE_3D" || u.startsWith("FILE_3D_");
+    };
 
     const outputs = (node && node.outputs) || [];
     for (let i = 0; i < outputs.length; i++) {

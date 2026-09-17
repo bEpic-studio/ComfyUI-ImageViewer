@@ -565,7 +565,7 @@ export const ToolsMixin = {
             if (this._toolActive() && !this.isExposureModifierActive
                 && (e.button === 0 || e.button === 2)) {
                 if (e.target && e.target.closest && e.target.closest(
-                    ".bepic-toolbar,.bepic-tool-panel,#exposure-control,#compare-slider")) {
+                    ".bepic-toolbar,.bepic-tool-panel,#exposure-control,#compare-slider,#model-view")) {
                     return origDown ? origDown.call(this.viewport, e) : undefined;
                 }
                 const consumed = this._onToolPointerDown(e);

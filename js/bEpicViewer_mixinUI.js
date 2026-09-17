@@ -45,6 +45,7 @@ export const UIMixin = {
         if (this.imgBase) this.imgBase.style.filter = filter;
         if (this.imgCompare) this.imgCompare.style.filter = filter;
         if (this.videoBase) this.videoBase.style.filter = filter;
+        if (this._applyModelLook) this._applyModelLook();
     },
 
     // ── Hotkeys ──────────────────────────────────────────────────────────────
@@ -209,6 +210,8 @@ export const UIMixin = {
         else if (win && win.setTimeout) win.setTimeout(run, 0);
         // The ticker holds a frame callback from the window being left behind.
         if (this.isComparing) this._startCompareTicker();
+        // So does the 3D view, and its WebGL canvas belongs to the old document.
+        if (this._model3d) this._model3d.rebind();
     },
 
     toggleUndock() {
@@ -1255,7 +1258,7 @@ export const UIMixin = {
     _overViewportChrome(e) {
         const t = e.target;
         return !!(t && t.closest && t.closest(
-            '#exposure-control, .bepic-toolbar, .bepic-tool-panel'));
+            '#exposure-control, .bepic-toolbar, .bepic-tool-panel, #model-view'));
     },
 
     setupZoomAndPan() {

@@ -17,6 +17,7 @@ import { DnDMixin }      from "./bEpicViewer_mixinDnD.js";
 import { BrowserMixin }  from "./bEpicViewer_mixinBrowser.js";
 import { DockMixin }     from "./bEpicViewer_mixinDock.js";
 import { ReconnectMixin } from "./bEpicViewer_mixinReconnect.js";
+import { ModelMixin }    from "./bEpicViewer_mixinModel.js";
 import { SendFromNodeMixin, registerSendToViewerMenu, sendSelectionToViewer } from "./bEpicViewer_sendFromNode.js";
 import {
     registerSendNode, registerToolNode, senderTabInfo, isViewerSourceNode,
@@ -1043,6 +1044,7 @@ Object.assign(
     DockMixin,
     SendFromNodeMixin,
     ReconnectMixin,
+    ModelMixin,
 );
 
 if (!customElements.get("bepic-viewer-panel")) {

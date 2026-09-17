@@ -23,7 +23,7 @@ import { api } from "../../scripts/api.js";
 // to a poster frame for them, because nothing in the browser can decode them.
 const _PLAYABLE_VIDEO = /\.(mp4|m4v|mov|webm|ogv)$/i;
 
-const _KIND_GLYPH = { dir: "📁", image: "🖼", video: "🎬" };
+const _KIND_GLYPH = { dir: "📁", image: "🖼", video: "🎬", model: "🧊" };
 
 // Preview pane height, in px, and the range the splitter allows.
 const _PREVIEW_DEFAULT = 190;
@@ -432,6 +432,21 @@ export const BrowserMixin = {
         this._setBrowserMeta(file, "");
         const url = this.buildImgUrl({ path: file.path, external: true });
 
+        if (file.kind === "model") {
+            // The tile the viewer rendered last time this model was opened, or a
+            // placeholder. A second WebGL view just for the preview isn't worth it.
+            if (msg) { msg.textContent = "Double-click to view this model in 3D."; msg.style.display = "block"; }
+            if (img) {
+                img.onload = () => {
+                    if (this._browserPreviewPath !== file.path) return;
+                    img.style.display = "block";
+                };
+                img.onerror = null;
+                img.src = this.thumbUrl({ kind: "model", path: file.path });
+            }
+            return;
+        }
+
         if (file.kind === "video") {
             if (_PLAYABLE_VIDEO.test(file.name) && vid) {
                 // metadata only, for the same reason the main player uses it: the
@@ -534,7 +549,7 @@ export const BrowserMixin = {
             path: file.path, url: null,
             filename: file.name, subfolder: "", type: null,
             external: true, dropped: false,
-            kind: file.kind === "video" ? "video" : "image",
+            kind: file.kind === "video" || file.kind === "model" ? file.kind : "image",
             thumb: null, isSequence: false, seqDir: null, seqCount: 0,
         };
     },

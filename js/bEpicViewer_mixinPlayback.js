@@ -68,6 +68,9 @@ export const PlaybackMixin = {
     // nothing to check for here. Selecting an item still loads the full file —
     // that path goes through buildImgUrl, not this.
     thumbUrl(imgObj) {
+        // A model dropped from the desktop has no server copy to render a tile of.
+        const modelTile = this._modelThumbUrl && this._frameIsModel(imgObj) && this._modelThumbUrl(imgObj);
+        if (modelTile) return modelTile;
         if (imgObj && imgObj.thumb) {
             // A dropped video's poster is an inline data:/blob: URL, not a temp path.
             if (/^(data:|blob:)/.test(imgObj.thumb)) return imgObj.thumb;
@@ -112,6 +115,13 @@ export const PlaybackMixin = {
     updateShapeInfo() {
         if (!this.shapeOverlay) return;
         if (!this.showShape) { this.shapeOverlay.style.display = "none"; return; }
+
+        if (this._modelMode) {
+            const info = this._modelInfoText();
+            this.shapeOverlay.style.display = info ? "block" : "none";
+            this.shapeOverlay.innerText = info;
+            return;
+        }
 
         const size = this._displayedMediaSize();
         // Nothing decoded yet. Every path that loads media calls back in here
@@ -362,7 +372,23 @@ export const PlaybackMixin = {
 
     setFrame(idx) {
         const imgs = this._baseFrames();
-        if (!imgs || imgs.length === 0) { this._exitVideoMode(); this._updatePathBar(null); return; }
+        if (!imgs || imgs.length === 0) {
+            this._exitVideoMode(); this._exitModelMode(); this._updatePathBar(null); return;
+        }
+
+        // 3D model: shown by the model view instead of the image layers. A tab
+        // of several models (a mesh batch) steps through them on the timeline.
+        {
+            const mIdx = this.displayFrameToImageIndex(idx, imgs.length);
+            if (this._frameIsModel(imgs[mIdx])) {
+                this.currentFrame = this.imageIndexToDisplayFrame(mIdx, imgs.length);
+                this._enterModelMode(imgs[mIdx]);
+                this.timeline.value = this.currentFrame;
+                this.container.querySelector('#cur-f').innerText = this.currentFrame;
+                return;
+            }
+            this._exitModelMode();
+        }
 
         // Video tab: a single {kind:"video"} entry scrubbed through the <video>.
         // Still refresh the compare slot so a video base shows the second tab in
@@ -418,6 +444,11 @@ export const PlaybackMixin = {
         if (!this.isComparing) { this._hideCompareVideo(); return; }
         const compImgs = this._compareFrames();
         if (!compImgs || compImgs.length === 0) { this._hideCompareVideo(); return; }
+        if (this._frameIsModel(compImgs[0])) {
+            this._hideCompareVideo();
+            if (this.imgCompare) this.imgCompare.style.display = "none";
+            return;
+        }
 
         // Video compare tab → drive the compare <video>.
         if (this._frameIsVideo(compImgs[0])) { this._compareVideoSync(displayFrame, compImgs[0]); return; }
@@ -860,6 +891,7 @@ export const PlaybackMixin = {
     // ── Fit view ──────────────────────────────────────────────────────────────
 
     fitView() {
+        if (this._modelMode && this._model3d) { this._model3d.resetView(); return; }
         // Video tab: fit using the decoded video dimensions.
         if (this._videoMode && this.videoBase) {
             const vw = this.videoBase.videoWidth, vh = this.videoBase.videoHeight;
