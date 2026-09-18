@@ -25,6 +25,7 @@ bEpic ImageViewer is a custom node extension for [ComfyUI](https://github.com/co
 | **Frame to Graph** | Shift-drag the timeline onto the graph for a Load Image node holding the frame on screen — a video frame is extracted to a PNG beside the clip, or to `output/extracted_frames` for clips outside ComfyUI's folders. |
 | **Dockable Panels** | Drag any panel by its title bar to either side of the picture, or stack it above another. Splitters between them, arrangement remembered. |
 | **3D Models** | View GLB, glTF, FBX, OBJ, STL and PLY like ComfyUI's Save 3D Model does, and save meshes and 3D files from the send node. |
+| **3D Previz** | Build a scene from several models, move them with a gizmo, set cameras, keyframe both, and render the shot back into the workflow. |
 | **Undock / Multi-Monitor** | Pop the viewer into its own browser window for a second screen. |
 
 ## How It Works

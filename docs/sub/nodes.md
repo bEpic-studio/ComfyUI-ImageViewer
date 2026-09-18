@@ -19,6 +19,19 @@ Saved PNGs carry the ComfyUI workflow in their text chunks, exactly as SaveImage
 
 ---
 
+## bEpic 3D Scene (Previz)
+
+Holds a [previz scene](models-3d.md#previz-building-a-scene) and hands the rendered shot to the workflow.
+
+| | |
+|---|---|
+| Inputs | `tab_name` — the viewer tab to build in<br>`render_name` — folder under `output/previz` the shot renders into<br>`model` (optional) — a MESH or 3D file added to the scene<br>`scene_data` — the scene itself, written by the viewer (hidden) |
+| Outputs | `images` (IMAGE) — the rendered frames<br>`frame_count` (INT)<br>`fps` (FLOAT) — the scene's frame rate |
+
+The scene travels with the workflow because it lives in `scene_data`. Until you press **Render…** in the viewer's previz panel there is nothing to output, and the node hands back a single black frame and says so in the log.
+
+---
+
 ## bEpic Image Viewer Roto
 
 Gives the viewer's **Roto** tool somewhere to put its matte.
@@ -89,6 +102,10 @@ Every route that takes a path only reaches ComfyUI's input, output and temp fold
 | GET | `/bepic/view_file?path=…` | Serve a file from an allowed folder |
 | GET | `/bepic/browse?path=…` | List one allowed directory's sub-folders and media files (no path → ComfyUI's input folder) |
 | POST | `/bepic/browse_frames` | Turn browsed paths into viewer frames — fps, frame count and poster for videos |
+| GET | `/bepic/scenes` | List saved previz scenes |
+| GET | `/bepic/scene?name=…` | Read one saved scene |
+| POST | `/bepic/scene` | Save a scene to `output/3d_scenes` |
+| POST | `/bepic/previz_frame` | Write one rendered previz frame into `output/previz/<name>` (decoded and re-encoded) |
 | POST | `/bepic/model_thumb` | Keep the viewer's rendering of a model as its history thumbnail (decoded and re-encoded; allowed folders only) |
 | GET | `/bepic/lib/three/<file>` | The bundled three.js files for 3D tabs |
 | POST | `/bepic/clear_cache` | Delete all `bEpic_*` temp files |

@@ -48,6 +48,69 @@ The first time a model is shown, the viewer keeps a snapshot of it as its histor
 
 Compare, contact sheet and the drawing tools don't apply to a model tab.
 
+## Previz: Building a Scene
+
+A 3D tab starts with one model. Press **Previz** in the 3D toolbar and that tab becomes a scene you can build on: several models, cameras, and keyframes on the viewer's own timeline. Pressing it again leaves previz — the scene is kept, so you can go back to it.
+
+### The Panel
+
+| Part | What it does |
+|---|---|
+| **+ Model** | Adds the model selected in the [File Browser](other.md#file-browser). You can also drag models straight into the 3D view, from the browser or the history strip. |
+| **+ Camera** | Adds a camera where the view is right now. |
+| **Duplicate / Delete** | Copies or removes the selected item, animation included. |
+| **Move / Rotate / Scale** | Which gizmo the selected item gets. |
+| The list | Every item in the scene. Click to select, **◉** hides and shows, **▣** looks through a camera, **•** marks an item that has keyframes. |
+| Transform fields | The selected item's position, rotation (degrees) and scale — and a camera's field of view. |
+| **fps / frames** | The shot's frame rate and length. The viewer's timeline covers exactly this range while previz is on. |
+
+Click an object in the viewport to select it, or a camera's frustum lines. Drag the gizmo to move it; the numbers follow, and so does the scene.
+
+### Cameras
+
+**▣** looks through a camera. Orbiting, panning and zooming then move *that* camera, so lining up a shot is the same as looking at it. **▣** again returns to the free view, where cameras are drawn as frustums you can pick and move like anything else.
+
+### Animation
+
+Keyframes are per item and per property.
+
+| Action | How |
+|---|---|
+| Key the selection where it stands | **Key @ *frame*** |
+| Key one property only | The **◆** next to that row |
+| Autokey | **Auto** — every move you make from then on keys the property it changed |
+| Change a key | Go to its frame, move the item |
+| Remove a key | **Delete key**, or double-click its tick on the timeline |
+| Interpolation | **Smooth** (default), **Linear** or **Hold**, applied to new keys and to any key on the current frame |
+
+Keyframes show as orange ticks under the timeline; click one to jump to it. Play, scrub and step work as they do for footage. A model with its own animation (an FBX clip) is scrubbed by the timeline too, so the whole shot stays frame-accurate.
+
+Rotations interpolate the short way round, so a turn from 350° to 10° moves 20°, not 340°.
+
+### Rendering the Shot Back Into ComfyUI
+
+The **bEpic 3D Scene (Previz)** node holds the scene and hands the rendered shot to your workflow.
+
+1. Drop the node in and press **Toggle bEpic Image Viewer** — its tab opens as an empty scene.
+2. Build the shot. The scene is stored on the node, so it is saved with the workflow.
+3. Set **render_name** on the node (the folder under `output/previz`).
+4. Press **Render…** in the panel, set a size, and press **Go**. The viewer plays the shot through the active camera and writes one PNG per frame.
+5. Run the workflow. The node outputs those frames as `images`, plus `frame_count` and `fps`.
+
+The render is what the viewport draws, at the size you asked for — so it carries the same materials, grid and lighting you see. Hide the grid first if you don't want it in the render.
+
+**Save** and **Load** keep a scene as a file in `output/3d_scenes`, for reuse across workflows.
+
+### Where a Scene Lives
+
+| Scene on… | Kept in | Survives |
+|---|---|---|
+| a **bEpic 3D Scene** node | the node, in the workflow | saving and reopening the workflow, and other machines |
+| any other 3D tab | the viewer's own state | reloading the page |
+| a saved scene file | `output/3d_scenes/<name>.json` | anything |
+
+Models are referenced by path, not copied into the scene — so a scene opened on another machine needs those files at the same paths, or in [a folder the viewer may read](other.md#which-folders-the-viewer-can-open).
+
 ## Moving Models Onto the Graph
 
 Drag a model's history thumbnail or browser row onto the graph and you get a **Load 3D** node holding it. Drop it onto an existing Load 3D node to swap that node's model. Load 3D reads from `input/3d`, so the file is copied there.
@@ -59,6 +122,8 @@ Drag a model's history thumbnail or browser row onto the graph and you get a **L
 - Draco- and KTX2-compressed glTF files aren't supported yet.
 - Gaussian splats and USDZ can be saved but not shown.
 - three.js (r180, the version ComfyUI uses) ships with the node and only loads when a model tab first opens.
+- Previz has no lights of its own yet: a scene is lit by the same fixed rig as a single model.
+- Compare, contact sheet and the drawing tools don't apply to a previz tab.
 
 ---
 

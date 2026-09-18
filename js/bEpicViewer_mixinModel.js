@@ -57,8 +57,14 @@ export const ModelMixin = {
         view.setPrevizActive(this.isPrevizTab());
         if (this.isPrevizTab()) {
             // The scene decides what is on screen, not the tab's own frame.
-            view.setScene(this.previzScene(), Math.round(this.currentFrame || 0));
-            view.select(this._previzSelection);
+            // Scrubbing comes through here every frame, so the scene is only
+            // re-reconciled when it is a different one — applyFrame does the
+            // per-frame work (see the previz branch of setFrame).
+            const scene = this.previzScene();
+            if (view.scene3d !== scene) {
+                view.setScene(scene, Math.round(this.currentFrame || 0));
+                view.select(this._previzSelection);
+            }
             this._previzRenderPanel();
             this._updatePathBar(null);
         } else {

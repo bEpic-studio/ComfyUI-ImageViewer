@@ -268,16 +268,20 @@ export const PrevizMixin = {
         }
     },
 
-    /** Scene JSON a bEpic 3D Scene node sent with its tab. */
-    previzAdoptSceneData(key, raw) {
+    /**
+     * Scene JSON a bEpic 3D Scene node sent with its tab. `always` makes the tab
+     * a previz tab even when the scene is empty, which is what a freshly dropped
+     * node needs: something to open the 3D view and its panel on.
+     */
+    previzAdoptSceneData(key, raw, { always = false } = {}) {
         const incoming = S.parseScene(raw);
         const current = this.previzScene(key);
         // The node is the source of truth only when the viewer has nothing yet:
         // otherwise a re-run would throw away edits made since.
         if (current && current.items.length) return current;
-        if (!incoming.items.length) return current;
+        if (!incoming.items.length && !always) return current;
         this._setScene(key, incoming);
-        this._previzSelection = incoming.items[0].id;
+        this._previzSelection = incoming.items.length ? incoming.items[0].id : null;
         return incoming;
     },
 

@@ -876,7 +876,10 @@ class ViewerPanel extends HTMLElement {
             // A previz node sends its scene with the tab, so opening a saved
             // workflow rebuilds the shot before anything has run.
             if (data.scene_data !== undefined && this.previzAdoptSceneData) {
-                this.previzAdoptSceneData(finalKey, data.scene_data);
+                // A previz node's tab is always a scene, even an empty one —
+                // otherwise a fresh node would show nothing and there would be
+                // no 3D view to switch previz on from.
+                this.previzAdoptSceneData(finalKey, data.scene_data, { always: true });
             }
             if (data.render_name) {
                 if (!this._previzRenderNames) this._previzRenderNames = {};
