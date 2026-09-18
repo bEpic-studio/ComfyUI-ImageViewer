@@ -51,7 +51,10 @@ const TOOL_WIDGETS = {
 export const OUTPUT_TOGGLE = "save_to_output";
 export const FORMAT_WIDGET = "file_format";
 export const FPS_WIDGET    = "fps";
-export const OUTPUT_CFG_WIDGETS = [FORMAT_WIDGET, FPS_WIDGET, "filename_prefix"];
+export const SEQUENCE_TOGGLE = "is_sequence";
+export const SEQUENCE_WIDGETS = ["first_frame_number", "padding"];
+export const OUTPUT_CFG_WIDGETS = [FORMAT_WIDGET, FPS_WIDGET, "filename_prefix",
+                                   SEQUENCE_TOGGLE, ...SEQUENCE_WIDGETS];
 
 export function isViewerSourceNode(node) {
     return !!node && SOURCE_NODES.includes(node.type);
@@ -219,21 +222,28 @@ export function registerSendNode(nodeType, nodeData) {
         // anything.
         resyncOnChange(this, OUTPUT_TOGGLE);
         resyncOnChange(this, FORMAT_WIDGET);
+        resyncOnChange(this, SEQUENCE_TOGGLE);
         this.bepicSyncOutputWidgets();
         return r;
     };
 
     // Show file_format / fps / filename_prefix only while save_to_output is on,
-    // then reflow the node to the new widget layout. fps is narrower still: it
-    // sets the encoder's frame rate, so a still-image format has nothing for it
-    // to do and it stays hidden there.
+    // then reflow the node to the new widget layout. Two of them are narrower
+    // still, and they are opposites: fps sets the encoder's frame rate, so a
+    // still-image format has nothing for it to do, while is_sequence renames
+    // still images and means nothing for a video. The sequence numbering fields
+    // follow is_sequence itself.
     nodeType.prototype.bepicSyncOutputWidgets = function () {
         const toggle = getToolWidget(this, OUTPUT_TOGGLE);
         const saving = !!(toggle && toggle.value);
         const fmt    = getToolWidget(this, FORMAT_WIDGET);
-        const showFps = saving && isVideoFormat(this, fmt && fmt.value);
+        const isVideo = isVideoFormat(this, fmt && fmt.value);
+        const seqOn  = !!(getToolWidget(this, SEQUENCE_TOGGLE) || {}).value;
         for (const name of OUTPUT_CFG_WIDGETS) {
-            const show = (name === FPS_WIDGET) ? showFps : saving;
+            let show = saving;
+            if (name === FPS_WIDGET) show = saving && isVideo;
+            else if (name === SEQUENCE_TOGGLE) show = saving && !isVideo;
+            else if (SEQUENCE_WIDGETS.includes(name)) show = saving && !isVideo && seqOn;
             setWidgetVisible(this, getToolWidget(this, name), show);
         }
         const sz = this.computeSize();
@@ -266,6 +276,7 @@ export function registerSendNode(nodeType, nodeData) {
         // through onNodeCreated first, depending on the frontend version.
         resyncOnChange(this, OUTPUT_TOGGLE);
         resyncOnChange(this, FORMAT_WIDGET);
+        resyncOnChange(this, SEQUENCE_TOGGLE);
         this.bepicSyncOutputWidgets?.();
         return r;
     };

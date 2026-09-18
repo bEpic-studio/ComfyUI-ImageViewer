@@ -534,7 +534,8 @@ def write_video_input(video_obj, save_to_output, filename_prefix, file_format, f
 # ── public entry point ───────────────────────────────────────────────────────
 
 def write_output(tensor, filename_prefix, file_format, fps,
-                 prompt=None, extra_pnginfo=None):
+                 prompt=None, extra_pnginfo=None,
+                 sequence=False, first_frame=1001, padding=4):
     """Persist `tensor` to the ComfyUI output directory in `file_format`.
 
     Returns (saved_paths, viewer_frames): `saved_paths` are the files written to
@@ -545,7 +546,14 @@ def write_output(tensor, filename_prefix, file_format, fps,
     Saved PNGs carry the ComfyUI workflow in their text chunks, the way SaveImage
     writes it, so they can be dragged back in to rebuild the graph. Video outputs
     get the same thing in a same-named companion PNG, since no video container
-    here can hold it."""
+    here can hold it.
+
+    `sequence` switches still images from ComfyUI's `prefix_00001_.ext` to the
+    frame-numbered `prefix.1001.ext` the rest of a VFX pipeline expects:
+    numbering starts at `first_frame`, and `padding` sets the digit count.
+    Unlike the counter-based scheme those names are the same on every run, so a
+    re-render replaces the frames it wrote before instead of piling up a second
+    copy beside them."""
     if tensor is None:
         return [], []
     if folder_paths is None:
@@ -583,8 +591,11 @@ def write_output(tensor, filename_prefix, file_format, fps,
         })
         print(f"[bEpicSendToViewer] wrote {path} (+ workflow PNG, {n} frames @ {viewer_frames[0]['fps']} fps)")
     else:
+        pad = max(1, min(9, int(padding or 4)))
+        start = max(0, int(first_frame or 0))
         for i in range(n):
-            file = f"{filename}_{counter:05}_.{ext}"
+            file = (f"{filename}.{start + i:0{pad}d}.{ext}" if sequence
+                    else f"{filename}_{counter:05}_.{ext}")
             path = os.path.join(full_folder, file)
             _write_image(frames[i], path, ext, prompt, extra_pnginfo)
             saved.append(path)

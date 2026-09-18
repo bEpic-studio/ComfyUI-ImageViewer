@@ -380,6 +380,17 @@ class bEpicSendToViewer:
                                   "step": 0.01,
                                   "bepic_video_formats": _VIDEO_FORMATS}),
                 "filename_prefix": ("STRING", {"default": "bEpic"}),
+                # Image-sequence naming: prefix.1001.png instead of ComfyUI's
+                # prefix_00001_.png. Only means anything for a still format, so
+                # the JS hides it for video ones — the marker below is how it
+                # knows, the same way fps is driven by bepic_video_formats.
+                "is_sequence": ("BOOLEAN", {"default": False,
+                                            "bepic_still_only": True}),
+                "first_frame_number": ("INT", {"default": 1001, "min": 0,
+                                               "max": 99999999, "step": 1,
+                                               "bepic_sequence_only": True}),
+                "padding": ("INT", {"default": 4, "min": 1, "max": 9, "step": 1,
+                                    "bepic_sequence_only": True}),
             },
             "hidden": {
                 "unique_id": "UNIQUE_ID",
@@ -399,6 +410,7 @@ class bEpicSendToViewer:
 
     def send(self, input, tab_name="", save_to_output=False,
              file_format="png", fps=24.0, filename_prefix="bEpic",
+             is_sequence=False, first_frame_number=1001, padding=4,
              unique_id=None, prompt=None, extra_pnginfo=None):
         safe_label = tab_name.replace(" ", "_") if tab_name else "send"
 
@@ -430,7 +442,9 @@ class bEpicSendToViewer:
             try:
                 _, tab_frames = file_writer.write_output(
                     input, filename_prefix, file_format, fps,
-                    prompt, extra_pnginfo)
+                    prompt, extra_pnginfo,
+                    sequence=is_sequence, first_frame=first_frame_number,
+                    padding=padding)
             except Exception as e:
                 print(f"\033[91m[bEpicSendToViewer] save to output failed: {e}\033[0m")
                 tab_frames = None

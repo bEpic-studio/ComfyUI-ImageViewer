@@ -15,6 +15,21 @@ Turn on **save_to_output** and the frames are also written to ComfyUI's output d
 
 A `MESH` or 3D file input opens as a [3D tab](models-3d.md) instead, and **save_to_output** writes it the way ComfyUI's Save 3D Model does: meshes as GLB, 3D files in their own format.
 
+### Image Sequences
+
+With a still-image format (png, exr, jpg, tiff, …) the node also offers **is_sequence**, off by default. Turn it on and two more fields appear under `filename_prefix`:
+
+| Widget | What it does |
+|---|---|
+| `first_frame_number` | The number the first frame gets (default 1001) |
+| `padding` | How many digits that number is written with (default 4, max 9) |
+
+Frames are then named `prefix.1001.png`, `prefix.1002.png`, … instead of ComfyUI's `prefix_00001_.png`, which is what the rest of a VFX pipeline expects. A `filename_prefix` of `shots/shotA` writes `output/shots/shotA.1001.png`.
+
+Those names don't depend on what is already in the folder, so re-running the workflow **overwrites the frames it wrote last time** rather than saving a second copy beside them. The counter-based default never overwrites anything.
+
+The toggle is hidden for video formats, where it means nothing.
+
 Saved PNGs carry the ComfyUI workflow in their text chunks, exactly as SaveImage writes it, so dropping one back onto the canvas rebuilds the graph that made it. A video container can't hold that, so video outputs get it in a same-named companion PNG — which doubles as the clip's thumbnail in the viewer's history. Starting ComfyUI with `--disable-metadata` switches this off, the same as it does for the standard save nodes.
 
 ---
