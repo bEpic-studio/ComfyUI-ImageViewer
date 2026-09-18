@@ -16,6 +16,7 @@
 // runs while the camera is settling or an animation plays.
 import { api } from "../../scripts/api.js";
 import { app } from "../../scripts/app.js";
+import { evaluate } from "./bEpicViewer_scene3d.js";
 
 let _libsPromise = null;
 
@@ -26,9 +27,11 @@ function loadLibs() {
         _libsPromise = Promise.all([
             load("three.module.min.js"), load("OrbitControls.js"), load("GLTFLoader.js"),
             load("FBXLoader.js"), load("OBJLoader.js"), load("STLLoader.js"), load("PLYLoader.js"),
-        ]).then(([THREE, orbit, gltf, fbx, obj, stl, ply]) => ({
+            load("TransformControls.js"),
+        ]).then(([THREE, orbit, gltf, fbx, obj, stl, ply, gizmo]) => ({
             THREE,
             OrbitControls: orbit.OrbitControls,
+            TransformControls: gizmo.TransformControls,
             GLTFLoader: gltf.GLTFLoader,
             FBXLoader: fbx.FBXLoader,
             OBJLoader: obj.OBJLoader,
@@ -92,6 +95,12 @@ export class Model3DView {
         this._mixer = null;
         this._playing = false;
         this._originals = new Map();
+        // Previz scene: item id -> { item, root, key, mixer, clips, camera, helper }
+        this._entries = new Map();
+        this.scene3d = null;          // the scene data this view is showing
+        this.sceneFrame = 0;          // where the timeline is (frames, not a media frame)
+        this.selected = null;
+        this.gizmoMode = "translate";
     }
 
     get doc() { return this.host.ownerDocument; }
@@ -222,7 +231,10 @@ export class Model3DView {
         this.canvas = canvas;
         canvas.style.filter = this.channelFilter;
 
-        const controls = new OrbitControls(this.camera, canvas);
+        canvas.addEventListener("pointerdown", (e) => this._onPointerDown(e));
+        canvas.addEventListener("pointerup", (e) => this._onPointerUp(e));
+
+        const controls = new OrbitControls(this.activeCameraObject(), canvas);
         controls.enableDamping = true;
         if (this._target) controls.target.copy(this._target);
         controls.addEventListener("change", () => this.requestRender());
@@ -235,6 +247,46 @@ export class Model3DView {
             this._ro.observe(this.root);
         }
         this._resize();
+    }
+
+    // Click to select, drag to orbit: the difference is whether the pointer
+    // moved between down and up.
+    _onPointerDown(e) {
+        this._downAt = { x: e.clientX, y: e.clientY, button: e.button };
+    }
+
+    _onPointerUp(e) {
+        const d = this._downAt;
+        this._downAt = null;
+        if (!d || d.button !== 0 || !this.scene3d) return;
+        if (Math.abs(e.clientX - d.x) > 3 || Math.abs(e.clientY - d.y) > 3) return;
+        if (this.gizmo && this.gizmo.dragging) return;
+        const hit = this._pick(e);
+        if (this.hooks.onPick) this.hooks.onPick(hit);
+    }
+
+    /** The scene item under the pointer, or null. */
+    _pick(e) {
+        if (!this.libs || !this.canvas) return null;
+        const { THREE } = this.libs;
+        const rect = this.canvas.getBoundingClientRect();
+        const ndc = new THREE.Vector2(
+            ((e.clientX - rect.left) / rect.width) * 2 - 1,
+            -((e.clientY - rect.top) / rect.height) * 2 + 1);
+        const ray = new THREE.Raycaster();
+        ray.setFromCamera(ndc, this.activeCameraObject());
+        const roots = [];
+        for (const entry of this._entries.values()) {
+            if (entry.object) roots.push(entry.root);
+            // A camera has no geometry; its frustum lines are what you click.
+            if (entry.helper && entry.helper.visible) roots.push(entry.helper);
+        }
+        ray.params.Line.threshold = 0.05 * (this.activeCameraObject().position.length() || 1);
+        const hits = ray.intersectObjects(roots, true);
+        if (!hits.length) return null;
+        let node = hits[0].object;
+        while (node && !node.userData.bepicItemId) node = node.parent;
+        return node ? node.userData.bepicItemId : null;
     }
 
     _disposeRenderer() {
@@ -260,9 +312,24 @@ export class Model3DView {
         const w = Math.max(1, this.root.clientWidth);
         const h = Math.max(1, this.root.clientHeight);
         this.renderer.setSize(w, h, false);
-        this.camera.aspect = w / h;
-        this.camera.updateProjectionMatrix();
+        for (const cam of [this.camera, ...this._sceneCameraObjects()]) {
+            cam.aspect = w / h;
+            cam.updateProjectionMatrix();
+        }
         this.requestRender();
+    }
+
+    _sceneCameraObjects() {
+        const out = [];
+        for (const e of this._entries.values()) if (e.camera) out.push(e.camera);
+        return out;
+    }
+
+    /** The camera the viewport renders from: a scene camera, or the free one. */
+    activeCameraObject() {
+        const id = this.scene3d && this.scene3d.activeCamera;
+        const entry = id ? this._entries.get(id) : null;
+        return (entry && entry.camera) || this.camera;
     }
 
     requestRender() {
@@ -276,6 +343,8 @@ export class Model3DView {
         if (!this.renderer) return;
         const dt = this.clock.getDelta();
         let again = false;
+        // A lone model's own clip runs in real time; in a scene the timeline
+        // owns the clock, so clips are set to the frame instead (see applyFrame).
         if (this._mixer && this._playing) {
             this._mixer.update(dt);
             again = true;
@@ -283,7 +352,7 @@ export class Model3DView {
         // update() reports whether damping moved the camera; keep going until
         // it has settled.
         if (this.controls && this.controls.update(dt)) again = true;
-        this.renderer.render(this.scene, this.camera);
+        this.renderer.render(this.scene, this.activeCameraObject());
         if (again) this.requestRender();
     }
 
@@ -461,6 +530,30 @@ export class Model3DView {
         this._syncToolbar();
     }
 
+    /**
+     * A stand-in object spanning everything in the scene that has geometry, so
+     * resetView can frame the lot. resetView measures with Box3.setFromObject,
+     * which reads geometry — hence a box mesh rather than an empty group.
+     */
+    _sceneBoundsSubject() {
+        const { THREE } = this.libs;
+        const box = new THREE.Box3();
+        let any = false;
+        for (const entry of this._entries.values()) {
+            if (!entry.object) continue;
+            box.expandByObject(entry.root);
+            any = true;
+        }
+        if (!any || box.isEmpty()) return null;
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(
+            Math.max(size.x, 1e-6), Math.max(size.y, 1e-6), Math.max(size.z, 1e-6)));
+        mesh.position.copy(center);
+        mesh.updateMatrixWorld(true);
+        return mesh;
+    }
+
     _disposeObject(object) {
         const shared = new Set(Object.values(this.materials || {}));
         object.traverse((c) => {
@@ -479,22 +572,29 @@ export class Model3DView {
     // ── View controls ────────────────────────────────────────────────────────
 
     /** Frame the model the way ComfyUI's CameraManager.setupForModel does. */
-    resetView() {
+    resetView(subject) {
         if (!this.libs) return;
         const { THREE } = this.libs;
         const box = new THREE.Box3();
-        if (this.model) box.setFromObject(this.model);
+        const target = subject || this.model || this._sceneBoundsSubject();
+        if (target) box.setFromObject(target);
         if (box.isEmpty()) box.set(new THREE.Vector3(-1, 0, -1), new THREE.Vector3(1, 2, 1));
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
         const maxDim = Math.max(size.x, size.y, size.z) || 1;
         const distance = (Math.max(size.x, size.z) || maxDim) * 2;
 
-        this.camera.near = Math.min(0.01, maxDim / 1000);
-        this.camera.far = Math.max(10000, maxDim * 100);
-        this.camera.position.set(center.x + distance, center.y + maxDim, center.z + distance);
-        this.camera.lookAt(center);
-        this.camera.updateProjectionMatrix();
+        const cam = this.activeCameraObject();
+        cam.near = Math.min(0.01, maxDim / 1000);
+        cam.far = Math.max(10000, maxDim * 100);
+        cam.position.set(center.x + distance, center.y + maxDim, center.z + distance);
+        cam.lookAt(center);
+        cam.updateProjectionMatrix();
+        // Reframing through a scene camera moves that camera, so the scene has
+        // to hear about it.
+        if (cam !== this.camera && this.hooks.onCameraMoved) {
+            this.hooks.onCameraMoved(this.scene3d.activeCamera, this.readTransform(cam));
+        }
 
         // ComfyUI's grid is a fixed 20 units. Scaled by powers of ten here, so a
         // model in millimetres or kilometres still sits on a readable grid.
@@ -542,6 +642,308 @@ export class Model3DView {
         this.requestRender();
     }
 
+    // ── Previz scene ─────────────────────────────────────────────────────────
+    //
+    // setScene is a reconcile, not a rebuild: items already on screen keep
+    // their loaded geometry, new ones are fetched, removed ones are disposed.
+    // That is what lets the outliner, the gizmo and the timeline all just hand
+    // the scene back after every edit.
+
+    async setScene(scene, frame = this.sceneFrame) {
+        await this.ensure();
+        this.scene3d = scene;
+        this.sceneFrame = frame;
+
+        const wanted = new Set();
+        const pending = [];
+        for (const item of scene.items || []) {
+            wanted.add(item.id);
+            const entry = this._entries.get(item.id);
+            if (!entry) {
+                pending.push(this._addEntry(item));
+                continue;
+            }
+            entry.item = item;
+            // A model whose file changed is reloaded; everything else is a
+            // transform, which applyFrame picks up.
+            if (item.kind === "model" && entry.key !== this._srcKey(item.src)) {
+                this._disposeEntry(entry, false);
+                pending.push(this._loadEntry(entry, item));
+            }
+        }
+        for (const [id, entry] of [...this._entries]) {
+            if (wanted.has(id)) continue;
+            this._disposeEntry(entry, true);
+            this._entries.delete(id);
+        }
+
+        this.applyFrame(frame);
+        this._syncSelection();
+        this.requestRender();
+        await Promise.all(pending);
+        this.applyFrame(this.sceneFrame);
+        this._updateSceneStats();
+        this.requestRender();
+    }
+
+    _srcKey(src) {
+        if (!src) return "";
+        return src.path || src.url || [src.type, src.subfolder, src.filename].filter(Boolean).join("/");
+    }
+
+    async _addEntry(item) {
+        const { THREE } = this.libs;
+        // A camera IS its own root, so the gizmo and the orbit controls move the
+        // camera itself and its transform is the one the scene stores.
+        const root = item.kind === "camera"
+            ? new THREE.PerspectiveCamera(item.fov || 35, this._aspect(), 0.1, 10000)
+            : new THREE.Group();
+        root.name = item.name;
+        root.userData.bepicItemId = item.id;
+        this.scene.add(root);
+        const entry = { item, root, key: "", mixer: null, clips: [], camera: null, helper: null, stats: null };
+        this._entries.set(item.id, entry);
+
+        if (item.kind === "camera") {
+            entry.camera = root;
+            // Every camera but the one being looked through is drawn as its own
+            // frustum, so a shot can be lined up from outside it — and clicked.
+            entry.helper = new THREE.CameraHelper(root);
+            entry.helper.userData.bepicItemId = item.id;
+            this.scene.add(entry.helper);
+            return entry;
+        }
+        await this._loadEntry(entry, item);
+        return entry;
+    }
+
+    async _loadEntry(entry, item) {
+        const url = this.hooks.srcUrl && this.hooks.srcUrl(item.src);
+        entry.key = this._srcKey(item.src);
+        if (!url) return entry;
+        const format = modelFormatOf(item.src) || "glb";
+        try {
+            const loaded = await this._load(item.src, url, format);
+            // The scene may have moved on while this was in flight.
+            if (!this._entries.has(item.id)) { this._disposeObject(loaded.object); return entry; }
+            entry.root.add(loaded.object);
+            entry.object = loaded.object;
+            entry.stats = this._statsOf(loaded.object, format);
+            loaded.object.traverse((c) => { if (c.isMesh) this._originals.set(c, c.material); });
+            if (loaded.animations && loaded.animations.length) {
+                const { THREE } = this.libs;
+                entry.mixer = new THREE.AnimationMixer(loaded.object);
+                entry.clips = loaded.animations;
+                entry.mixer.clipAction(loaded.animations[0]).play();
+            }
+            this.setMaterialMode(this.materialMode);
+        } catch (e) {
+            console.warn(`[bEpicViewer] could not load ${item.name}`, e);
+            entry.error = (e && e.message) || String(e);
+            if (this.hooks.onError) this.hooks.onError(item.src, entry.error);
+        }
+        return entry;
+    }
+
+    _disposeEntry(entry, full) {
+        if (entry.mixer) { entry.mixer.stopAllAction(); entry.mixer = null; }
+        if (entry.object) {
+            entry.root.remove(entry.object);
+            this._disposeObject(entry.object);
+            for (const mesh of [...this._originals.keys()]) {
+                if (!mesh.parent) this._originals.delete(mesh);
+            }
+            entry.object = null;
+            entry.stats = null;
+        }
+        if (!full) return;
+        if (entry.helper) { this.scene.remove(entry.helper); entry.helper.dispose(); entry.helper = null; }
+        if (this.gizmo && this.gizmo.object === entry.root) this.gizmo.detach();
+        this.scene.remove(entry.root);
+    }
+
+    _aspect() {
+        const w = this.root ? this.root.clientWidth : 1;
+        const h = this.root ? this.root.clientHeight : 1;
+        return (w && h) ? w / h : 1;
+    }
+
+    /** Place every item as it stands at `frame`, animation included. */
+    applyFrame(frame) {
+        if (!this.scene3d || !this.libs) return;
+        this.sceneFrame = frame;
+        const { THREE } = this.libs;
+        const D = Math.PI / 180;
+        const activeId = this.scene3d.activeCamera;
+        const fps = this.scene3d.fps || 24;
+        for (const item of this.scene3d.items || []) {
+            const entry = this._entries.get(item.id);
+            if (!entry) continue;
+            const at = evaluate(item, frame);
+            entry.root.position.set(...at.position);
+            entry.root.rotation.set(at.rotation[0] * D, at.rotation[1] * D, at.rotation[2] * D);
+            entry.root.scale.set(...at.scale);
+            entry.root.visible = item.visible !== false;
+            if (entry.camera) {
+                entry.camera.fov = at.fov || 35;
+                entry.camera.aspect = this._aspect();
+                entry.camera.updateProjectionMatrix();
+                // Drawing the camera you are looking through would put its own
+                // frustum lines across the shot.
+                const active = item.id === activeId;
+                if (entry.helper) {
+                    entry.helper.visible = !active && item.visible !== false;
+                    entry.helper.update();
+                }
+            }
+            // Clips are scrubbed, not played, so a frame always looks the same
+            // whether it was reached by playing or by dragging the timeline.
+            if (entry.mixer) entry.mixer.setTime(Math.max(0, frame / fps));
+        }
+        if (this.gizmo && this.gizmo.object) this.gizmo.updateMatrixWorld();
+        this.requestRender();
+    }
+
+    _statsOf(object, format) {
+        let vertices = 0, triangles = 0, points = 0, meshes = 0;
+        object.traverse((c) => {
+            if (c.isMesh) {
+                meshes++;
+                const pos = c.geometry && c.geometry.getAttribute("position");
+                if (pos) {
+                    vertices += pos.count;
+                    triangles += Math.floor((c.geometry.index ? c.geometry.index.count : pos.count) / 3);
+                }
+            } else if (c.isPoints) {
+                const pos = c.geometry && c.geometry.getAttribute("position");
+                if (pos) points += pos.count;
+            }
+        });
+        return { vertices, triangles, points, meshes, format };
+    }
+
+    _updateSceneStats() {
+        if (!this.scene3d) return;
+        const total = { vertices: 0, triangles: 0, points: 0, meshes: 0, objects: 0, cameras: 0, format: "scene" };
+        for (const entry of this._entries.values()) {
+            if (entry.camera) { total.cameras++; continue; }
+            total.objects++;
+            if (!entry.stats) continue;
+            total.vertices += entry.stats.vertices;
+            total.triangles += entry.stats.triangles;
+            total.points += entry.stats.points;
+            total.meshes += entry.stats.meshes;
+        }
+        this.stats = total;
+        if (this.hooks.onLoaded) this.hooks.onLoaded(null, total);
+    }
+
+    // ── Selection and the gizmo ──────────────────────────────────────────────
+
+    select(id) {
+        this.selected = id || null;
+        this._syncSelection();
+        this.requestRender();
+    }
+
+    setGizmoMode(mode) {
+        this.gizmoMode = ["translate", "rotate", "scale"].includes(mode) ? mode : "translate";
+        if (this.gizmo) this.gizmo.setMode(this.gizmoMode);
+        this.requestRender();
+    }
+
+    _ensureGizmo() {
+        if (this.gizmo || !this.libs || !this.renderer) return;
+        const { TransformControls } = this.libs;
+        const gizmo = new TransformControls(this.activeCameraObject(), this.canvas);
+        gizmo.setMode(this.gizmoMode);
+        gizmo.addEventListener("change", () => this.requestRender());
+        // The orbit controls and the gizmo both want the drag; the gizmo wins
+        // while one of its handles is held.
+        gizmo.addEventListener("dragging-changed", (e) => {
+            if (this.controls) this.controls.enabled = !e.value;
+            if (!e.value && this.hooks.onTransformEnd) this.hooks.onTransformEnd(this.selected);
+        });
+        gizmo.addEventListener("objectChange", () => {
+            const entry = this.selected && this._entries.get(this.selected);
+            if (entry && this.hooks.onTransform) this.hooks.onTransform(this.selected, this.readTransform(entry.root));
+            if (entry && entry.helper) entry.helper.update();
+            this.requestRender();
+        });
+        const helper = gizmo.getHelper ? gizmo.getHelper() : gizmo;
+        helper.name = "GizmoTransformControls";
+        this.scene.add(helper);
+        this.gizmo = gizmo;
+        this.gizmoHelper = helper;
+    }
+
+    _syncSelection() {
+        const entry = this.selected ? this._entries.get(this.selected) : null;
+        // No scene, or nothing selected: no gizmo to show.
+        if (!entry || !this.scene3d) {
+            if (this.gizmo) this.gizmo.detach();
+            return;
+        }
+        this._ensureGizmo();
+        if (!this.gizmo) return;
+        this.gizmo.camera = this.activeCameraObject();
+        // You cannot drag the camera you are looking through — there would be
+        // no handles on screen to grab.
+        if (entry.item.kind === "camera" && entry.item.id === this.scene3d.activeCamera) this.gizmo.detach();
+        else this.gizmo.attach(entry.root);
+    }
+
+    /** The transform of a three object, in the scene's own units (degrees). */
+    readTransform(object) {
+        const R = 180 / Math.PI;
+        return {
+            position: object.position.toArray(),
+            rotation: [object.rotation.x * R, object.rotation.y * R, object.rotation.z * R],
+            scale: object.scale.toArray(),
+        };
+    }
+
+    /** Where the free camera is now — for "add a camera from this view". */
+    viewTransform() {
+        const R = 180 / Math.PI;
+        const cam = this.activeCameraObject();
+        return {
+            position: cam.position.toArray(),
+            rotation: [cam.rotation.x * R, cam.rotation.y * R, cam.rotation.z * R],
+            fov: cam.isPerspectiveCamera ? cam.fov : 35,
+        };
+    }
+
+    /**
+     * Look through a scene camera (or the free one when `id` is null). Orbiting
+     * then drives that camera, and every move is reported so the scene keeps it.
+     */
+    setActiveCamera(id) {
+        if (!this.scene3d) return;
+        this.scene3d.activeCamera = id || null;
+        const cam = this.activeCameraObject();
+        if (this.controls) {
+            this.controls.object = cam;
+            // Looking through a camera, the orbit pivot sits in front of it, so
+            // dragging turns the shot rather than swinging it around the origin.
+            if (id) {
+                const dir = new this.libs.THREE.Vector3(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(new this.libs.THREE.Quaternion()));
+                const at = cam.getWorldPosition(new this.libs.THREE.Vector3()).add(dir.multiplyScalar(5));
+                this.controls.target.copy(at);
+            }
+            this.controls.update();
+        }
+        this.applyFrame(this.sceneFrame);
+        this._syncSelection();
+        this.requestRender();
+    }
+
+    /** Frame the selected item, or the whole scene when nothing is selected. */
+    frameSelected() {
+        const entry = this.selected ? this._entries.get(this.selected) : null;
+        this.resetView(entry && entry.object ? entry.root : null);
+    }
+
     // ── Thumbnail ────────────────────────────────────────────────────────────
 
     _captureThumbnailSoon(frame, id) {
@@ -575,6 +977,8 @@ export class Model3DView {
 
     dispose() {
         this._loadId++;
+        for (const [id, entry] of [...this._entries]) { this._disposeEntry(entry, true); this._entries.delete(id); }
+        if (this.gizmo) { this.gizmo.dispose(); this.gizmo = null; }
         if (this.model) this._clearModel();
         this._disposeRenderer();
         if (this.materials) Object.values(this.materials).forEach((m) => m.dispose());
