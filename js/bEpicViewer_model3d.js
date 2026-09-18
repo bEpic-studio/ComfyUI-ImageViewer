@@ -295,6 +295,12 @@ export class Model3DView {
         if (this.hooks.onPick) this.hooks.onPick(hit);
     }
 
+    /** Why an item has nothing on screen, or "" when it is fine. */
+    itemError(id) {
+        const entry = this._entries.get(id);
+        return (entry && entry.error) || "";
+    }
+
     /** The scene item under the pointer, or null. */
     _pick(e) {
         if (!this.libs || !this.canvas) return null;

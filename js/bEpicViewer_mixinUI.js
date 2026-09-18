@@ -417,6 +417,13 @@ export const UIMixin = {
                 const nextFrame = (preferredFrame >= bounds.min && preferredFrame <= bounds.max) ? preferredFrame : bounds.min;
                 this.setFrame(nextFrame);
             }
+        } else if (this.isPrevizTab && this.isPrevizTab(k)) {
+            // A previz tab's picture comes from its scene, not from media
+            // frames — a scene node's tab has none at all.
+            this.applyTimelineBounds();
+            const bounds = this.getTimelineBounds();
+            const preferred = tabState && Number.isFinite(tabState.frame) ? tabState.frame : 0;
+            this.setFrame(preferred >= bounds.min && preferred <= bounds.max ? preferred : bounds.min);
         } else {
             if (this._exitVideoMode) this._exitVideoMode();
             this.imgBase.src = "";

@@ -44,21 +44,23 @@ export const PrevizMixin = {
      * Turn the current 3D tab into a scene. Whatever the tab is showing becomes
      * its first object, so previz starts from the model already on screen.
      */
-    enterPreviz(key = this.activeTab) {
+    async enterPreviz(key = this.activeTab) {
         if (this.previzScene(key)) return this.previzScene(key);
         const scene = S.makeScene();
         const frames = (this.allTabs[key] || []).filter((f) => this._frameIsModel(f));
         for (const frame of frames) {
-            const item = S.makeModelItem(this._srcOfFrame(frame), frame.name || frame.filename);
+            const item = S.makeModelItem(await this._previzSrcFor(frame), frame.name || frame.filename);
             item.name = S.uniqueName(scene, item.name);
             item.fromTab = true;             // replaced when the node sends new media
             scene.items.push(item);
         }
         this._setScene(key, scene);
         this._previzSelection = scene.items.length ? scene.items[0].id : null;
+        // The scene first, so the frame change below shows it instead of racing
+        // a second load against it.
+        await this.previzChanged({ reload: true });
         this.applyTimelineBounds();
         this.setFrame(0);
-        this.previzChanged({ reload: true });
         return scene;
     },
 
@@ -74,6 +76,33 @@ export const PrevizMixin = {
         this.applyTimelineBounds();
         this.refreshView();
         this.queuePersistViewerState();
+    },
+
+    /**
+     * Open (or build) a scene node's previz tab and show it — what the node's
+     * "Open in Image Viewer" button calls. The tab normally appears only once
+     * the node has run; here it is made from the node itself, so a shot can be
+     * built before anything is queued.
+     */
+    openPrevizForNode(node, { key, label, sceneData, renderName } = {}) {
+        if (!key) return null;
+        if (!this.allTabs[key]) {
+            this.allTabs[key] = [];
+            this.tabLabels[key] = label || key;
+            if (node && node.id != null) this.tabSourceNodeIds[key] = node.id;
+            if (!this.tabOrder.includes(key)) this.tabOrder.push(key);
+            this._rebuildTabBar(null);
+        } else if (node && node.id != null) {
+            this.tabSourceNodeIds[key] = node.id;
+        }
+        if (renderName) {
+            if (!this._previzRenderNames) this._previzRenderNames = {};
+            this._previzRenderNames[key] = renderName;
+        }
+        this.previzAdoptSceneData(key, sceneData || "", { always: true });
+        this.requestPanelOpen();
+        this.switchTab(key);
+        return this.previzScene(key);
     },
 
     togglePreviz(key = this.activeTab) {
@@ -95,12 +124,50 @@ export const PrevizMixin = {
         if (!frame) return null;
         const src = { name: frame.name || frame.filename || "model", format: frame.format || null };
         if (frame.path) { src.path = frame.path; src.external = !!frame.external; }
+        // A file dropped from the desktop lives on a blob: URL and ALSO carries
+        // a made-up filename (see _frameForDroppedFile). Asking the server for
+        // that name fetches nothing, which left an empty object with only its
+        // gizmo on screen — the blob is the real source.
+        else if (frame.url) src.url = frame.url;
         else if (frame.filename) {
             src.filename = frame.filename;
             src.subfolder = frame.subfolder || "";
             src.type = frame.type || "output";
-        } else if (frame.url) src.url = frame.url;
+        }
         return src;
+    },
+
+    /**
+     * A source the scene can still find later. A blob: URL dies with the page,
+     * so a dropped model is copied into ./input/3d first — where the Load 3D
+     * node reads from too. The blob is kept when that fails, so the model at
+     * least shows for this session.
+     */
+    async _previzSrcFor(frame) {
+        const src = this._srcOfFrame(frame);
+        if (!src || !src.url) return src;
+        try {
+            const res = await fetch(src.url);
+            if (!res.ok) throw new Error(`fetch ${res.status}`);
+            const blob = await res.blob();
+            const name = this._basename(frame.name || frame.filename || "model.glb");
+            const body = new FormData();
+            body.append("image", new File([blob], name, { type: "application/octet-stream" }), name);
+            body.append("subfolder", "3d");
+            body.append("type", "input");
+            body.append("overwrite", "true");
+            const up = await api.fetchApi("/upload/image", { method: "POST", body });
+            if (up.status !== 200) throw new Error(`upload ${up.status}`);
+            const data = await up.json();
+            return {
+                name: src.name, format: src.format,
+                filename: data.name, subfolder: data.subfolder || "3d",
+                type: data.type || "input",
+            };
+        } catch (e) {
+            console.warn("[bEpicViewer] could not copy the dropped model into ./input/3d", e);
+            return src;
+        }
     },
 
     // ── Editing ──────────────────────────────────────────────────────────────
@@ -113,16 +180,17 @@ export const PrevizMixin = {
      */
     previzChanged({ reload = false, persist = true } = {}) {
         const scene = this.previzScene();
-        if (!scene) return;
+        if (!scene) return Promise.resolve();
         const view = this._modelView();
-        if (reload) view.setScene(scene, this.currentFrame || 0);
-        else view.applyFrame(this.currentFrame || 0);
+        const done = reload ? view.setScene(scene, this.currentFrame || 0)
+                            : (view.applyFrame(this.currentFrame || 0), Promise.resolve());
         this._previzRenderPanel();
         this._previzRenderTicks();
         if (persist) {
             this.previzPersist();
             this.queuePersistViewerState();
         }
+        return done;
     },
 
     previzSelect(id) {
@@ -136,20 +204,24 @@ export const PrevizMixin = {
         return S.itemById(this.previzScene(), this._previzSelection);
     },
 
-    previzAddModels(items) {
+    async previzAddModels(items) {
         const scene = this.previzScene();
         if (!scene || !items || !items.length) return 0;
+        const wasEmpty = scene.items.length === 0;
         let added = 0;
         for (const it of items) {
-            const src = this._srcOfFrame(it);
-            if (!src || (!src.path && !src.filename)) continue;    // nothing the server can reload
+            const src = await this._previzSrcFor(it);
+            if (!src || (!src.path && !src.filename && !src.url)) continue;
             const item = S.makeModelItem(src, src.name);
             item.name = S.uniqueName(scene, item.name);
             scene.items.push(item);
             this._previzSelection = item.id;
             added++;
         }
-        if (added) this.previzChanged({ reload: true });
+        if (!added) return 0;
+        await this.previzChanged({ reload: true });
+        // The first model in an empty scene is what the camera should frame.
+        if (wasEmpty && this._model3d) this._model3d.resetView();
         return added;
     },
 
@@ -434,6 +506,15 @@ export const PrevizMixin = {
                 look.title = scene.activeCamera === item.id ? "Back to the free view" : "Look through this camera";
                 look.onclick = (e) => { e.stopPropagation(); this.previzLookThrough(item.id); };
                 row.append(look);
+            }
+            const failed = this._model3d ? this._model3d.itemError(item.id) : "";
+            if (failed) {
+                const warn = doc.createElement("span");
+                warn.className = "previz-warn";
+                warn.textContent = "!";
+                warn.title = `This file could not be loaded:
+${failed}`;
+                row.append(warn);
             }
             if (S.keyframeFrames(item).length) {
                 const dot = doc.createElement("span");

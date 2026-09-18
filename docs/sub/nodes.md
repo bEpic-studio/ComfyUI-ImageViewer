@@ -43,6 +43,8 @@ Holds a [previz scene](models-3d.md#previz-building-a-scene) and hands the rende
 | Inputs | `tab_name` — the viewer tab to build in<br>`render_name` — folder under `output/previz` the shot renders into<br>`model` (optional) — a MESH or 3D file added to the scene<br>`scene_data` — the scene itself, written by the viewer (hidden) |
 | Outputs | `images` (IMAGE) — the rendered frames<br>`frame_count` (INT)<br>`fps` (FLOAT) — the scene's frame rate |
 
+**Open in Image Viewer** on the node opens the viewer on that node's previz tab, creating it if the node has never run.
+
 The scene travels with the workflow because it lives in `scene_data`. Until you press **Render…** in the viewer's previz panel there is nothing to output, and the node hands back a single black frame and says so in the log.
 
 ---

@@ -808,3 +808,4 @@ textarea.param-input {
 .previz-key { background: none; border: none; color: #666; cursor: pointer; font-size: 12px; }
 .previz-key.on, .previz-key:hover { color: #f60; }
 .previz-foot { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.previz-warn { color: #e66; font-weight: 700; cursor: help; }

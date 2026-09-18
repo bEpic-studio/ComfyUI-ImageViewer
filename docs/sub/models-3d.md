@@ -56,7 +56,7 @@ A 3D tab starts with one model. Press **Previz** in the 3D toolbar and that tab 
 
 | Part | What it does |
 |---|---|
-| **+ Model** | Adds the model selected in the [File Browser](other.md#file-browser). You can also drag models straight into the 3D view, from the browser or the history strip. |
+| **+ Model** | Adds the model selected in the [File Browser](other.md#file-browser). You can also drag models straight into the 3D view, from the browser, the history strip or your desktop. |
 | **+ Camera** | Adds a camera where the view is right now. |
 | **Duplicate / Delete** | Copies or removes the selected item, animation included. |
 | **Move / Rotate / Scale** | Which gizmo the selected item gets. |
@@ -91,7 +91,7 @@ Rotations interpolate the short way round, so a turn from 350° to 10° moves 20
 
 The **bEpic 3D Scene (Previz)** node holds the scene and hands the rendered shot to your workflow.
 
-1. Drop the node in and press **Toggle bEpic Image Viewer** — its tab opens as an empty scene.
+1. Drop the node in and press **Open in Image Viewer** on it. The viewer opens on that node's tab as an empty scene — no run needed.
 2. Build the shot. The scene is stored on the node, so it is saved with the workflow.
 3. Set **render_name** on the node (the folder under `output/previz`).
 4. Press **Render…** in the panel, set a size, and press **Go**. The viewer plays the shot through the active camera and writes one PNG per frame.
@@ -109,7 +109,9 @@ The render is what the viewport draws, at the size you asked for — so it carri
 | any other 3D tab | the viewer's own state | reloading the page |
 | a saved scene file | `output/3d_scenes/<name>.json` | anything |
 
-Models are referenced by path, not copied into the scene — so a scene opened on another machine needs those files at the same paths, or in [a folder the viewer may read](other.md#which-folders-the-viewer-can-open).
+Models are referenced by path, not copied into the scene — so a scene opened on another machine needs those files at the same paths, or in [a folder the viewer may read](other.md#which-folders-the-viewer-can-open). A model dragged in from the desktop is the exception: it only exists in the browser, so it is copied into `input/3d` (where **Load 3D** reads from) to give the scene something it can find again.
+
+An item whose file can't be loaded shows a red **!** in the list, with the reason behind it — rather than an empty spot in the scene.
 
 ## Moving Models Onto the Graph
 

@@ -88,6 +88,22 @@ function _toggleViewerPanelFromUi() {
     _setViewerPanelToggle(!isViewerPanelToggledOn, { syncDisplay: true });
 }
 
+/** Show this scene node's previz tab, opening the viewer if it is closed. */
+function _openPrevizFromNode(node) {
+    _setViewerPanelToggle(true, { syncDisplay: true });
+    const panel = globalViewerPanel || document.querySelector("bepic-viewer-panel");
+    if (!panel || !panel.openPrevizForNode) return;
+    const info = senderTabInfo(node);
+    if (!info) return;
+    const widget = (name) => (node.widgets || []).find((w) => w && w.name === name);
+    panel.openPrevizForNode(node, {
+        key: info.key,
+        label: info.label,
+        sceneData: (widget("scene_data") || {}).value || "",
+        renderName: (widget("render_name") || {}).value || "",
+    });
+}
+
 // The panel a keymap command should act on: the viewer, but only while it is on
 // screen. Firing playback or channel changes at a closed panel would be invisible.
 function _activeViewerPanel() {
@@ -1232,6 +1248,15 @@ app.registerExtension({
         if (nodeData.name === BEPIC_SCENE_NODE) {
             // scene_data is written by the previz panel, not by hand.
             registerToolNode(nodeType, nodeData, "scene");
+            const onSceneNodeCreated = nodeType.prototype.onNodeCreated;
+            nodeType.prototype.onNodeCreated = function () {
+                const r = onSceneNodeCreated?.apply(this, arguments);
+                // Without this the tab only appears after a run, and a scene
+                // has to be built before there is anything to run.
+                this.addWidget("button", "Open in Image Viewer", null,
+                               () => _openPrevizFromNode(this));
+                return r;
+            };
         }
 
         if (nodeData.name === BEPIC_ROTO_NODE) {
