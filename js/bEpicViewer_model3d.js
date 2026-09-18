@@ -137,17 +137,21 @@ export class Model3DView {
         resetBtn.title = "Frame the model again (F)";
         resetBtn.onclick = () => this.resetView();
 
+        const previzBtn = el("button", "model-btn", "Previz");
+        previzBtn.title = "Build a scene from several models, with cameras and keyframes";
+        previzBtn.onclick = () => { if (this.hooks.onPrevizToggle) this.hooks.onPrevizToggle(); };
+
         const animBtn = el("button", "model-btn", "❚❚");
         animBtn.title = "Play / pause the model's animation";
         animBtn.style.display = "none";
         animBtn.onclick = () => this.setAnimationPlaying(!this._playing);
 
-        bar.append(modeSel, gridBtn, resetBtn, animBtn);
+        bar.append(modeSel, gridBtn, resetBtn, animBtn, previzBtn);
         const status = el("div", "model-status");
 
         root.append(bar, status);
         this.root = root;
-        this.ui = { modeSel, gridBtn, resetBtn, animBtn, status };
+        this.ui = { modeSel, gridBtn, resetBtn, animBtn, previzBtn, status };
         this._syncToolbar();
         this.host.appendChild(root);
     }
@@ -156,9 +160,35 @@ export class Model3DView {
         if (!this.ui) return;
         this.ui.modeSel.value = this.materialMode;
         this.ui.gridBtn.classList.toggle("active", this.showGrid);
-        const hasAnim = !!this._mixer;
+        // In a scene, clips are driven by the timeline, so there is no separate
+        // play button for them.
+        const hasAnim = !!this._mixer && !this.previzActive;
         this.ui.animBtn.style.display = hasAnim ? "" : "none";
         this.ui.animBtn.textContent = this._playing ? "❚❚" : "▶";
+        this.ui.previzBtn.classList.toggle("active", !!this.previzActive);
+        this.ui.previzBtn.title = this.previzActive
+            ? "Leave previz (the scene is kept)"
+            : "Build a scene from several models, with cameras and keyframes";
+    }
+
+    /** Previz on: the single-model view steps aside for the scene. */
+    setPrevizActive(on) {
+        const was = !!this.previzActive;
+        this.previzActive = !!on;
+        if (was && !this.previzActive) {
+            // Leaving previz: drop the scene's objects, keep the lone model path.
+            for (const [id, entry] of [...this._entries]) { this._disposeEntry(entry, true); this._entries.delete(id); }
+            this.scene3d = null;
+            this.selected = null;
+            if (this.gizmo) this.gizmo.detach();
+        }
+        if (!was && this.previzActive) {
+            // Entering previz: the lone model is now an item in the scene.
+            this._clearModel();
+            this._key = null;
+        }
+        this._syncToolbar();
+        this.requestRender();
     }
 
     _setStatus(text, isError = false) {
@@ -800,7 +830,9 @@ export class Model3DView {
             // whether it was reached by playing or by dragging the timeline.
             if (entry.mixer) entry.mixer.setTime(Math.max(0, frame / fps));
         }
-        if (this.gizmo && this.gizmo.object) this.gizmo.updateMatrixWorld();
+        // The gizmo is a controller, not an object; its handles live in the
+        // helper, which has to be told the item moved under it.
+        if (this.gizmoHelper && this.gizmo && this.gizmo.object) this.gizmoHelper.updateMatrixWorld();
         this.requestRender();
     }
 
@@ -953,6 +985,40 @@ export class Model3DView {
             const url = this.captureThumbnail(256);
             if (url) this.hooks.onThumbnail(frame, url);
         }, 300);
+    }
+
+    /**
+     * Render the current frame at an exact size and hand back a PNG data URL.
+     * The canvas itself is resized for the shot and put back by restoreSize(),
+     * so the render is the size asked for rather than whatever the panel is.
+     */
+    renderToDataURL(width, height) {
+        if (!this.renderer || !this.canvas) return null;
+        const cam = this.activeCameraObject();
+        if (!this._sizeBackup) {
+            this._sizeBackup = { w: this.canvas.width, h: this.canvas.height, aspect: cam.aspect, ratio: this.renderer.getPixelRatio() };
+        }
+        this.renderer.setPixelRatio(1);
+        this.renderer.setSize(width, height, false);
+        cam.aspect = width / height;
+        cam.updateProjectionMatrix();
+        this.renderer.render(this.scene, cam);
+        try {
+            return this.canvas.toDataURL("image/png");
+        } catch (e) {
+            console.warn("[bEpicViewer] could not read the render back", e);
+            return null;
+        }
+    }
+
+    /** Undo renderToDataURL's resize. */
+    restoreSize() {
+        if (!this._sizeBackup || !this.renderer) return;
+        const b = this._sizeBackup;
+        this._sizeBackup = null;
+        this.renderer.setPixelRatio(b.ratio);
+        this._resize();
+        this.requestRender();
     }
 
     /** A square PNG data URL of the current view, `size` px wide. */

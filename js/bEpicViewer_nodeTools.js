@@ -24,13 +24,14 @@ import { app } from "../../scripts/app.js";
 export const BEPIC_SEND_NODE = "bEpicSendToViewer";
 export const BEPIC_ROTO_NODE = "bEpicImageViewerRoto";
 export const BEPIC_SAM3_NODE = "bEpicImageViewerSAM3Collector";
+export const BEPIC_SCENE_NODE = "bEpicScene3D";
 
 // Tool kind → node type. The SAM3 points and boxes tools share one collector.
 export const TOOL_NODE_TYPES = { roto: BEPIC_ROTO_NODE, sam3: BEPIC_SAM3_NODE };
 const TOOL_NODE_KINDS = { [BEPIC_ROTO_NODE]: "roto", [BEPIC_SAM3_NODE]: "sam3" };
 
 // Every node type that pushes its input into a viewer tab.
-const SOURCE_NODES = [BEPIC_SEND_NODE, BEPIC_ROTO_NODE, BEPIC_SAM3_NODE];
+const SOURCE_NODES = [BEPIC_SEND_NODE, BEPIC_ROTO_NODE, BEPIC_SAM3_NODE, BEPIC_SCENE_NODE];
 
 export const ROTO_WIDGET = "roto_data";
 export const SAM3_POS_WIDGET = "sam3_positive";
@@ -38,7 +39,10 @@ export const SAM3_NEG_WIDGET = "sam3_negative";
 export const SAM3_BOX_POS_WIDGET = "sam3_box_positive";
 export const SAM3_BOX_NEG_WIDGET = "sam3_box_negative";
 
+export const SCENE_WIDGET = "scene_data";
+
 const TOOL_WIDGETS = {
+    scene: [SCENE_WIDGET],
     roto: [ROTO_WIDGET],
     sam3: [SAM3_POS_WIDGET, SAM3_NEG_WIDGET, SAM3_BOX_POS_WIDGET, SAM3_BOX_NEG_WIDGET],
 };

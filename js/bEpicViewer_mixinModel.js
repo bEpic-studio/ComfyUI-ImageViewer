@@ -34,6 +34,13 @@ export const ModelMixin = {
                 onLoaded: () => this.updateShapeInfo(),
                 onError: () => this.updateShapeInfo(),
                 onThumbnail: (frame, dataUrl) => this._storeModelThumbnail(frame, dataUrl),
+                // Previz: the scene owns where everything is, so each move the
+                // view makes is handed back to it instead of kept in three.
+                srcUrl: (src) => this.buildImgUrl(src),
+                onPick: (id) => this.previzSelect(id),
+                onTransform: (id, transform) => this.previzApplyTransform(id, transform),
+                onCameraMoved: (id, transform) => this.previzApplyTransform(id, transform, ["position", "rotation"]),
+                onPrevizToggle: () => this.togglePreviz(),
             });
         }
         return this._model3d;
@@ -47,10 +54,19 @@ export const ModelMixin = {
             this.viewport.classList.add("model-mode");
         }
         this._applyModelLook();
-        view.show(frame, this.buildImgUrl(frame)).catch((e) => {
-            console.warn("[bEpicViewer] 3D view failed", e);
-        });
-        this._updatePathBar(frame);
+        view.setPrevizActive(this.isPrevizTab());
+        if (this.isPrevizTab()) {
+            // The scene decides what is on screen, not the tab's own frame.
+            view.setScene(this.previzScene(), Math.round(this.currentFrame || 0));
+            view.select(this._previzSelection);
+            this._previzRenderPanel();
+            this._updatePathBar(null);
+        } else {
+            view.show(frame, this.buildImgUrl(frame)).catch((e) => {
+                console.warn("[bEpicViewer] 3D view failed", e);
+            });
+            this._updatePathBar(frame);
+        }
         this.updateShapeInfo();
     },
 
@@ -74,7 +90,10 @@ export const ModelMixin = {
         const v = this._model3d;
         if (!v || !v.stats) return "";
         const s = v.stats;
-        const bits = [`${(s.format || "3D").toUpperCase()} model`];
+        const bits = s.format === "scene"
+            ? [`Scene · ${s.objects} object${s.objects === 1 ? "" : "s"}`,
+               `${s.cameras} camera${s.cameras === 1 ? "" : "s"}`]
+            : [`${(s.format || "3D").toUpperCase()} model`];
         if (s.triangles) bits.push(`${_fmtCount(s.vertices)} vertices`, `${_fmtCount(s.triangles)} triangles`);
         if (s.points) bits.push(`${_fmtCount(s.points)} points`);
         if (s.meshes > 1) bits.push(`${s.meshes} meshes`);

@@ -20,6 +20,11 @@ try:
 except Exception:  # pragma: no cover
     model_writer = None
 
+try:
+    from . import previz
+except Exception:  # pragma: no cover
+    previz = None
+
 _MODEL_EXTS = {".glb", ".gltf", ".fbx", ".obj", ".stl", ".ply"}
 
 # three.js and its loaders, for the viewer's 3D tabs. Outside js/ so ComfyUI
@@ -836,6 +841,78 @@ try:
                 return web.json_response({"error": str(e)}, status=500)
             return web.json_response({"ok": True})
 
+        async def _bepic_scene_list(_request):
+            """Saved previz scenes (output/3d_scenes)."""
+            if previz is None:
+                return web.json_response({"scenes": []})
+            return web.json_response({"scenes": [
+                {"name": s["name"], "mtime": s["mtime"]} for s in previz.list_scenes()]})
+
+        async def _bepic_scene_load(request):
+            if previz is None:
+                return web.json_response({"error": "unavailable"}, status=500)
+            name = request.query.get("name", "")
+            if not name:
+                return web.json_response({"error": "missing name"}, status=400)
+            try:
+                return web.json_response({"name": name, "scene": previz.load_scene(name)})
+            except FileNotFoundError:
+                return web.json_response({"error": "no such scene"}, status=404)
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=400)
+
+        async def _bepic_scene_save(request):
+            if previz is None:
+                return web.json_response({"error": "unavailable"}, status=500)
+            try:
+                data = await request.json()
+            except Exception:
+                data = None
+            if not isinstance(data, dict) or not isinstance(data.get("scene"), dict):
+                return web.json_response({"error": "bad request"}, status=400)
+            name = data.get("name") or "scene"
+            try:
+                path = previz.save_scene(name, data["scene"])
+            except OSError as e:
+                return web.json_response({"error": str(e)}, status=500)
+            return web.json_response({"ok": True, "name": previz._safe_name(name), "path": path})
+
+        async def _bepic_previz_frame(request):
+            """One rendered frame of a shot, straight from the viewer's canvas.
+
+            Like every other upload here the PNG is decoded and re-encoded, so
+            what lands in ./output/previz is an image and nothing else."""
+            if previz is None:
+                return web.json_response({"error": "unavailable"}, status=500)
+            try:
+                data = await request.json()
+            except Exception:
+                data = None
+            if not isinstance(data, dict):
+                return web.json_response({"error": "bad request"}, status=400)
+            name = data.get("name") or "shot"
+            try:
+                index = int(data.get("index", 0))
+            except (TypeError, ValueError):
+                return web.json_response({"error": "bad frame index"}, status=400)
+            if index < 0 or index > 99999:
+                return web.json_response({"error": "frame index out of range"}, status=400)
+            if data.get("first"):
+                previz.clear_render(name)          # a new take replaces the old one
+            try:
+                raw, _ext = _decode_image_upload(data.get("dataurl"), force_png=True)
+            except ValueError as e:
+                return web.json_response({"error": str(e)}, status=400)
+            previz.renders_dir(name, create=True)
+            path = previz.frame_path(name, index)
+            try:
+                with open(path, "wb") as fh:
+                    fh.write(raw)
+            except OSError as e:
+                return web.json_response({"error": str(e)}, status=500)
+            return web.json_response({"ok": True, "path": path,
+                                      "dir": os.path.dirname(path)})
+
         def _is_local(request):
             return (request.remote or "") in ("127.0.0.1", "::1", "localhost")
 
@@ -906,6 +983,14 @@ try:
         _safe_add("GET", "/bepic/lib/three/{name}", _bepic_three)
         _safe_add("GET", "/api/bepic/lib/three/{name}", _bepic_three)
         _safe_add("POST", "/bepic/model_thumb", _bepic_model_thumb)
+        _safe_add("GET", "/bepic/scenes", _bepic_scene_list)
+        _safe_add("GET", "/api/bepic/scenes", _bepic_scene_list)
+        _safe_add("GET", "/bepic/scene", _bepic_scene_load)
+        _safe_add("GET", "/api/bepic/scene", _bepic_scene_load)
+        _safe_add("POST", "/bepic/scene", _bepic_scene_save)
+        _safe_add("POST", "/api/bepic/scene", _bepic_scene_save)
+        _safe_add("POST", "/bepic/previz_frame", _bepic_previz_frame)
+        _safe_add("POST", "/api/bepic/previz_frame", _bepic_previz_frame)
         _safe_add("POST", "/api/bepic/model_thumb", _bepic_model_thumb)
         _safe_add("POST", "/bepic/reveal", _bepic_reveal)
         _safe_add("POST", "/api/bepic/reveal", _bepic_reveal)

@@ -85,7 +85,14 @@ export const DnDMixin = {
             let payload = null;
             try { payload = JSON.parse(e.dataTransfer.getData("application/x-bepic-history")); } catch (_) {}
             if (!payload) return;
-            this._openDragItemsInViewer(Array.isArray(payload.items) ? payload.items : [payload]);
+            const items = Array.isArray(payload.items) ? payload.items : [payload];
+            // Dropped onto a previz scene, models join the scene instead of
+            // replacing what the tab is showing.
+            if (this.isPrevizTab && this.isPrevizTab() && items.some((it) => this._frameIsModel(it))) {
+                this.previzAddModels(items.filter((it) => this._frameIsModel(it)));
+                return;
+            }
+            this._openDragItemsInViewer(items);
         });
     },
 

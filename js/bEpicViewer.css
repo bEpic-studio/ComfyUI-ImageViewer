@@ -763,3 +763,48 @@ textarea.param-input {
     color: #bbb; font-size: 12px; text-align: center; white-space: pre-line; pointer-events: none;
 }
 .model-status.error { border-color: #a33; color: #e88; }
+
+/* Previz panel: the outliner, transforms and keys for a 3D scene
+   (bEpicViewer_mixinPreviz.js). It lives inside the 3D view so it travels with
+   the viewer into the undocked window. */
+.previz-panel {
+    position: absolute; top: 44px; right: 8px; bottom: 34px; z-index: 3;
+    display: none; flex-direction: column; gap: 6px;
+    width: 250px; padding: 8px; box-sizing: border-box;
+    background: rgba(20, 20, 20, 0.94); border: 1px solid #444; border-radius: 6px;
+    color: #ddd; font-family: sans-serif; font-size: 12px; cursor: default;
+}
+.viewport.model-mode .model-toolbar { right: 266px; }
+.previz-head { display: flex; align-items: center; justify-content: space-between; }
+.previz-title { color: #f60; font-weight: 600; }
+.previz-x { background: none; border: none; color: #999; font-size: 15px; cursor: pointer; padding: 0 2px; }
+.previz-x:hover { color: #fff; }
+.previz-actions, .previz-row { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.previz-btn, .previz-sel {
+    background: #222; color: #ccc; border: 1px solid #444; border-radius: 3px;
+    padding: 2px 6px; font-size: 11px; cursor: pointer;
+}
+.previz-btn:hover, .previz-sel:hover { background: #333; color: #fff; }
+.previz-btn.active { color: #f60; border-color: #f60; }
+.previz-list {
+    flex: 1 1 auto; min-height: 60px; overflow-y: auto;
+    border: 1px solid #333; border-radius: 3px; background: #161616;
+}
+.previz-item { display: flex; align-items: center; gap: 4px; padding: 3px 4px; cursor: pointer; }
+.previz-item:hover { background: #242424; }
+.previz-item.selected { background: #33230f; outline: 1px solid #f60; }
+.previz-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.previz-eye, .previz-look {
+    background: none; border: none; color: #888; cursor: pointer; font-size: 12px; padding: 0 2px;
+}
+.previz-eye.off { color: #555; }
+.previz-look.active, .previz-eye:hover, .previz-look:hover { color: #f60; }
+.previz-anim { color: #f60; }
+.previz-empty { padding: 8px; color: #777; text-align: center; }
+.previz-props { display: flex; flex-direction: column; gap: 4px; }
+.previz-label { width: 42px; color: #999; flex: 0 0 auto; }
+.previz-num { width: 46px; background: #1b1b1b; color: #ddd; border: 1px solid #444; border-radius: 3px; padding: 2px 3px; font-size: 11px; }
+.previz-text { width: 100%; box-sizing: border-box; background: #1b1b1b; color: #ddd; border: 1px solid #444; border-radius: 3px; padding: 2px 4px; }
+.previz-key { background: none; border: none; color: #666; cursor: pointer; font-size: 12px; }
+.previz-key.on, .previz-key:hover { color: #f60; }
+.previz-foot { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }

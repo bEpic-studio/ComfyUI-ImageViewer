@@ -27,6 +27,11 @@ try:
 except Exception:
     model_writer = None
 
+try:
+    from . import previz
+except Exception:
+    previz = None
+
 
 _ANY = IO.ANY if IO is not None else "IMAGE"
 
@@ -557,16 +562,91 @@ class bEpicImageViewerSAM3Collector:
         )
 
 
+class bEpicScene3D:
+    """A previz scene: several models, cameras and keyframes, laid out in the
+    viewer's 3D tab.
+
+    The scene itself lives in `scene_data`, a hidden widget the viewer writes,
+    so it travels with the workflow. `render_name` names the folder under
+    ./output/previz the viewer renders the shot into, and this node reads that
+    folder back as its IMAGE output — so a camera move can drive a workflow.
+
+    An optional `model` input (MESH or 3D file) is pushed to the tab like
+    bEpicSendToViewer does, which adds it to the scene."""
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "tab_name": ("STRING", {"default": "Previz"}),
+                "render_name": ("STRING", {"default": "shot"}),
+            },
+            "optional": {
+                "model": (IO.ANY, ) if IO is not None else ("MESH", ),
+                "scene_data": ("STRING", {"default": "", "multiline": False}),
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT", "FLOAT")
+    RETURN_NAMES = ("images", "frame_count", "fps")
+    FUNCTION = "run"
+    OUTPUT_NODE = False
+    CATEGORY = "image/bEpic"
+
+    def run(self, tab_name="Previz", render_name="shot", model=None,
+            scene_data="", unique_id=None):
+        frames = []
+        if model is not None and model_writer is not None and model_writer.is_model_input(model):
+            try:
+                frames = _model_frames(model, tab_name or "previz", unique_id,
+                                       folder_paths.get_temp_directory())
+            except Exception as e:
+                print(f"[91m[bEpicScene3D] 3D input failed: {e}[0m")
+
+        # The viewer gets the scene with the tab, so opening a saved workflow
+        # rebuilds the shot without a run having to produce anything.
+        PromptServer.instance.send_sync("bepic.viewer.update", {
+            "tabs": {"tab": frames},
+            "unique_id": unique_id,
+            "scene_data": scene_data or "",
+            "render_name": render_name,
+        })
+
+        fps = 24.0
+        try:
+            parsed = json.loads(scene_data) if scene_data else {}
+            fps = float(parsed.get("fps", 24.0)) or 24.0
+        except Exception:
+            pass
+
+        images = None
+        if previz is not None:
+            try:
+                images = previz.load_render(render_name)
+            except Exception as e:
+                print(f"[91m[bEpicScene3D] {e}[0m")
+        if images is None:
+            print(f"[bEpicScene3D] nothing rendered yet for {render_name!r} — "
+                  f"press Render in the viewer's previz panel.")
+            images = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
+        return (images, int(images.shape[0]), fps)
+
+
 # mapping dictionaries for external use (nodes.py imports these)
 
 NODE_CLASS_MAPPINGS = {
     "bEpicSendToViewer": bEpicSendToViewer,
     "bEpicImageViewerRoto": bEpicImageViewerRoto,
     "bEpicImageViewerSAM3Collector": bEpicImageViewerSAM3Collector,
+    "bEpicScene3D": bEpicScene3D,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "bEpicSendToViewer": "bEpic Send To Image Viewer",
     "bEpicImageViewerRoto": "bEpic Image Viewer Roto",
     "bEpicImageViewerSAM3Collector": "bEpic Image Viewer SAM3 Collector",
+    "bEpicScene3D": "bEpic 3D Scene (Previz)",
 }

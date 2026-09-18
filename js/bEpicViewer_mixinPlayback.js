@@ -139,6 +139,8 @@ export const PlaybackMixin = {
     // ── Tab / image count helpers ────────────────────────────────────────────
 
     getImgCount() {
+        // Previz: the timeline belongs to the shot, not to the tab's media.
+        if (this.isPrevizTab && this.isPrevizTab()) return this.previzFrameCount();
         // A video tab holds a single frame dict but scrubs over many frames.
         if (this._videoMode && this._videoFrames > 0) return this._videoFrames;
         return (this._baseFrames() || []).length;
@@ -372,6 +374,21 @@ export const PlaybackMixin = {
 
     setFrame(idx) {
         const imgs = this._baseFrames();
+        // Previz: the frame is a moment in the shot, and the scene places every
+        // item itself — so this runs even for a tab with no media frames of its
+        // own, which is what a scene built from scratch is.
+        if (this.isPrevizTab && this.isPrevizTab()) {
+            const bounds = this.getTimelineBounds();
+            this.currentFrame = Math.max(bounds.min, Math.min(Math.round(idx), bounds.max));
+            this._enterModelMode(null);
+            if (this._model3d) this._model3d.applyFrame(this.currentFrame);
+            this._previzRenderPanel();
+            this._previzRenderTicks();
+            this.timeline.value = this.currentFrame;
+            this.container.querySelector('#cur-f').innerText = this.currentFrame;
+            return;
+        }
+
         if (!imgs || imgs.length === 0) {
             this._exitVideoMode(); this._exitModelMode(); this._updatePathBar(null); return;
         }

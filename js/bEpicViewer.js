@@ -18,12 +18,14 @@ import { BrowserMixin }  from "./bEpicViewer_mixinBrowser.js";
 import { DockMixin }     from "./bEpicViewer_mixinDock.js";
 import { ReconnectMixin } from "./bEpicViewer_mixinReconnect.js";
 import { ModelMixin }    from "./bEpicViewer_mixinModel.js";
+import { PrevizMixin }   from "./bEpicViewer_mixinPreviz.js";
 import { SendFromNodeMixin, registerSendToViewerMenu, sendSelectionToViewer } from "./bEpicViewer_sendFromNode.js";
 import {
-    registerSendNode, registerToolNode, senderTabInfo, isViewerSourceNode,
+    registerSendNode, registerToolNode, senderTabInfo, isViewerSourceNode, BEPIC_SCENE_NODE,
     BEPIC_SEND_NODE, BEPIC_ROTO_NODE, BEPIC_SAM3_NODE,
 } from "./bEpicViewer_nodeTools.js";
 import { viewerCommands, viewerKeybindings, VIEWER_TARGET_ID } from "./bEpicViewer_keymap.js";
+import { parseScene } from "./bEpicViewer_scene3d.js";
 
 let globalViewerPanel = null;
 const watchedNodeIds  = new Set();
@@ -264,6 +266,10 @@ class ViewerPanel extends HTMLElement {
                 tabOrder: (Array.isArray(this.tabOrder) ? this.tabOrder : []).filter(keepKey),
                 activeTab,
                 browserDir: this._browserDir || null,
+                // Previz scenes belong to their tab. A scene on a bEpic 3D Scene
+                // node is also kept there, but a scene built on a plain model
+                // tab has nowhere else to live.
+                scenes: pick(this._scenes || {}),
                 dock: this.serializeDock ? this.serializeDock() : null,
                 savedAt: Date.now(),
             };
@@ -294,6 +300,7 @@ class ViewerPanel extends HTMLElement {
         const restoredColors = (parsed.tabColors && typeof parsed.tabColors === 'object') ? parsed.tabColors : {};
         const restoredOrder = Array.isArray(parsed.tabOrder) ? parsed.tabOrder : [];
         const restoredActive = typeof parsed.activeTab === 'string' ? parsed.activeTab : null;
+        const restoredScenes = (parsed.scenes && typeof parsed.scenes === 'object') ? parsed.scenes : {};
 
         // How the panels were arranged, restored ahead of the early-out below —
         // a session that opened no tabs still deserves its layout back.
@@ -322,6 +329,11 @@ class ViewerPanel extends HTMLElement {
             this.tabViewState = JSON.parse(JSON.stringify(restoredTabViewState));
             this.tabLabels = JSON.parse(JSON.stringify(restoredLabels));
             this.tabColors = JSON.parse(JSON.stringify(restoredColors));
+            this._scenes = {};
+            for (const [k, raw] of Object.entries(restoredScenes)) {
+                const scene = parseScene(raw);
+                if (scene.items.length) this._scenes[k] = scene;
+            }
 
             const known = restoredOrder.filter(k => !!this.allTabs[k]);
             const added = Object.keys(this.allTabs).filter(k => !known.includes(k));
@@ -861,6 +873,16 @@ class ViewerPanel extends HTMLElement {
                 }
             }
 
+            // A previz node sends its scene with the tab, so opening a saved
+            // workflow rebuilds the shot before anything has run.
+            if (data.scene_data !== undefined && this.previzAdoptSceneData) {
+                this.previzAdoptSceneData(finalKey, data.scene_data);
+            }
+            if (data.render_name) {
+                if (!this._previzRenderNames) this._previzRenderNames = {};
+                this._previzRenderNames[finalKey] = data.render_name;
+            }
+
             // History push
             let didPrepend = false;
             try {
@@ -1045,6 +1067,7 @@ Object.assign(
     SendFromNodeMixin,
     ReconnectMixin,
     ModelMixin,
+    PrevizMixin,
 );
 
 if (!customElements.get("bepic-viewer-panel")) {
@@ -1201,6 +1224,11 @@ app.registerExtension({
 
         if (nodeData.name === BEPIC_SEND_NODE) {
             registerSendNode(nodeType, nodeData);
+        }
+
+        if (nodeData.name === BEPIC_SCENE_NODE) {
+            // scene_data is written by the previz panel, not by hand.
+            registerToolNode(nodeType, nodeData, "scene");
         }
 
         if (nodeData.name === BEPIC_ROTO_NODE) {
