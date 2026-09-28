@@ -526,6 +526,11 @@ try:
                 return web.Response(status=403, text=path_access.refusal(path))
             if not os.path.isfile(path):
                 return web.Response(status=404, text="file not found")
+            # `raw` is the file itself, never a browser-friendly stand-in: a
+            # world's HDR sky is read by three's HDR/EXR loaders, and a PNG
+            # proxy would throw away exactly the range it is there for.
+            if params.get("raw"):
+                return web.FileResponse(path, headers={"Cache-Control": "no-cache"})
             # `prim` narrows a USD stage (or an Alembic cache) to one subtree —
             # how a layout arrives as separate items the viewer can place; a
             # cache also takes `frame`, since it holds geometry per frame.

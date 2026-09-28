@@ -76,6 +76,11 @@ The contract is the scene schema — `SCHEMA.md` there, `bEpicViewer_worldData.j
   notes POSTed to `/bepic_worlds/feedback` (kept in the scene only when that route is missing).
 - A world arrives as a normal `bepic.viewer.update` with `scene_replace` (replace the tab's scene), `tab_label` and
   `focus_tab`; tab keys start `world:` and survive the stale-tab sweep.
+- A world built around a whole-picture model has it as an ordinary `model` item with id `scene` (placed by the pack's
+  `set_scene_model`), so the World tab is the only 3D view. An HDR sky (`sky.hdr`, `.hdr`/`.exr`) is read by the
+  vendored `HDRLoader` / `EXRLoader` from `/bepic/view_file?…&raw=1` (`raw` skips the PNG display proxy, which would
+  clip it); with `sky.lighting` it is also the world's PMREM environment, and `render.reflections: "sky"` keeps the
+  cube capture from replacing it (`_worldSkyLight` / `_worldDropSkyLight`).
 
 ### Keys and curves (previz and roto)
 

@@ -36,6 +36,12 @@ export function environmentSettings(item) {
             horizon: col(sky.horizon, "#b9cde0"),
             bottom: col(sky.bottom, "#6d6a5e"),
             src: file(sky.src),
+            // A high-dynamic-range panorama (.hdr / .exr, e.g. a photographed
+            // HDRI): read at full range, and — with `lighting` — the light and
+            // the reflections of the whole world, not just its backdrop.
+            hdr: sky.hdr === true || /\.(hdr|exr)$/i.test(String((sky.src && (sky.src.path || sky.src.name || sky.src.filename)) || "")),
+            lighting: sky.lighting === true,
+            intensity: num(sky.intensity, 1, 0, 100),
         },
         sun: {
             azimuth: num(sun.azimuth, 150),
@@ -55,7 +61,9 @@ export function environmentSettings(item) {
             tone: TONE_CURVES.includes(ren.tone) ? ren.tone : "linear",
             exposure: num(ren.exposure, 1, 0.01, 100),
             bloom: num(ren.bloom, 0, 0, 5),
-            reflections: ren.reflections === "capture" ? "capture" : "off",
+            // "capture": taken from the world itself at the walk start; "sky":
+            // the sky panorama's own (an HDRI that lights the world); "off".
+            reflections: ["capture", "sky"].includes(ren.reflections) ? ren.reflections : "off",
             fill: num(ren.fill, 0.35, 0, 1),
         },
     };

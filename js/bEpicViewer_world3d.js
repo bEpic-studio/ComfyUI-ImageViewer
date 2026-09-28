@@ -32,6 +32,19 @@ function loadPost() {
     return _postPromise;
 }
 
+// HDR panoramas (a photographed HDRI as the sky) are read by three's own
+// loaders, fetched the first time a world has one.
+let _hdrPromise = null;
+function loadHdr() {
+    if (!_hdrPromise) {
+        const base = api.apiURL("/bepic/lib/three/");
+        _hdrPromise = Promise.all(["HDRLoader.js", "EXRLoader.js"].map((n) => import(base + n)))
+            .then(([hdr, exr]) => ({ HDRLoader: hdr.HDRLoader, EXRLoader: exr.EXRLoader }))
+            .catch((e) => { _hdrPromise = null; throw e; });
+    }
+    return _hdrPromise;
+}
+
 // What each scatter shape is made of, unless the scatter says otherwise.
 const ROUGHNESS = { pine: 0.85, tree: 0.8, bush: 0.85, grass: 0.9, rock: 0.8, column: 0.55, lamp: 0.4, model: null };
 
@@ -192,7 +205,10 @@ export const WorldViewMixin = {
         }
         if (entry.envApplied) {
             this.scene.fog = null;
+            if (this.scene.background && this.scene.background.isTexture) this.scene.background.dispose();
             this.scene.background = null;
+            this.scene.backgroundIntensity = 1;
+            this._worldDropSkyLight();
             entry.envApplied = false;
         }
         if (entry.object) {
@@ -309,6 +325,13 @@ export const WorldViewMixin = {
         this._envDirty = false;
         const { THREE } = this.libs;
         const r = this._worldRenderSettings();
+        if (r && r.reflections === "sky" && this._skyEnvRT) {
+            // The sky panorama lights the world and gives its reflections.
+            if (this._envRT) { this._envRT.dispose(); this._envRT = null; }
+            this.scene.environment = this._skyEnvRT.texture;
+            this._worldScaleFill(r.fill);
+            return;
+        }
         if (!r || r.reflections !== "capture" || !this.renderer) {
             if (this._envRT) { this._envRT.dispose(); this._envRT = null; }
             if (this.scene.environment && this.scene.environment.userData && this.scene.environment.userData.bepicCapture) {
@@ -346,6 +369,32 @@ export const WorldViewMixin = {
         this._worldScaleFill(r.fill);
     },
 
+    /** Forget the light an HDR sky gave (its filtered map), if it gave one. */
+    _worldDropSkyLight() {
+        if (!this._skyEnvRT) return;
+        if (this.scene.environment === this._skyEnvRT.texture) this.scene.environment = null;
+        this.scene.environmentIntensity = 1;
+        this._skyEnvRT.dispose();
+        this._skyEnvRT = null;
+    },
+
+    /**
+     * The sky panorama as the world's image light: filtered once for rough
+     * and smooth surfaces (PMREM), then used by everything that reflects or
+     * is lit by the sky.
+     */
+    _worldSkyLight(tex, intensity) {
+        const { THREE } = this.libs;
+        this._worldDropSkyLight();
+        if (!this.renderer) return;
+        const pmrem = new THREE.PMREMGenerator(this.renderer);
+        this._skyEnvRT = pmrem.fromEquirectangular(tex);
+        pmrem.dispose();
+        this._skyEnvRT.texture.userData.bepicSky = true;
+        this.scene.environmentIntensity = intensity;
+        this._envDirty = true;
+    },
+
     _worldScaleFill(k) {
         for (const e of this._entries.values()) {
             if (e.item.kind !== "environment" || !e.worldExtras) continue;
@@ -364,11 +413,22 @@ export const WorldViewMixin = {
 
         // The sky: a gradient dome, or the panorama as the background.
         if (e.sky.mode === "panorama" && e.sky.src && this.hooks.srcUrl) {
-            this._loadTexture(this.hooks.srcUrl(e.sky.src)).then((tex) => {
-                if (entry.key !== this._worldKey(item) || !entry.envApplied) { tex.dispose(); return; }
+            const key = this._worldKey(item);
+            const load = e.sky.hdr
+                ? loadHdr().then((L) => {
+                    const src = e.sky.src;
+                    const exr = /\.exr$/i.test(String(src.path || src.name || src.filename || ""));
+                    return new (exr ? L.EXRLoader : L.HDRLoader)().loadAsync(this.hooks.srcUrl({ ...src, raw: true }));
+                })
+                : this._loadTexture(this.hooks.srcUrl(e.sky.src));
+            load.then((tex) => {
+                if (entry.key !== key || !entry.envApplied) { tex.dispose(); return; }
                 tex.mapping = THREE.EquirectangularReflectionMapping;
-                tex.colorSpace = THREE.SRGBColorSpace;
+                if (!e.sky.hdr) tex.colorSpace = THREE.SRGBColorSpace;
+                if (this.scene.background && this.scene.background.isTexture) this.scene.background.dispose();
                 this.scene.background = tex;
+                this.scene.backgroundIntensity = e.sky.intensity;
+                if (e.sky.lighting) this._worldSkyLight(tex, e.sky.intensity);
                 this.requestRender();
             }).catch((err) => { entry.error = err.message; });
         } else {

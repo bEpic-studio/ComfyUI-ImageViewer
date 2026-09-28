@@ -41,6 +41,8 @@ export const PlaybackMixin = {
             // An Alembic cache is geometry per frame: which one is part of the
             // request, and the server keeps one proxy per frame it is asked for.
             if (Number.isFinite(Number(imgObj.frame))) url += `&frame=${Math.max(0, Math.round(imgObj.frame))}`;
+            // The file's own bytes, not a display proxy (an HDR sky needs its range).
+            if (imgObj.raw && imgObj.external) url += '&raw=1';
             return api.apiURL(url);
         }
         let params = `?filename=${encodeURIComponent(imgObj.filename || '')}`;

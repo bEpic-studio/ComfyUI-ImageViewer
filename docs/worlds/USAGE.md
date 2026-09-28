@@ -1,6 +1,6 @@
 # bEpic Worlds — Usage Guide
 
-Updated 2026-09-24
+Updated 2026-09-28
 
 Ask agentY for a world from a picture; it builds it in ComfyUI and opens it in the bEpic viewer, where you walk it, pin notes, and have the agent act on them.
 
@@ -29,23 +29,42 @@ Things to say:
 - "Put three wooden benches along the path."
 - "Make the water move."
 - "Use Meshy for the cars this time." (paid API credits)
+- "Build it around a TRELLIS model of the whole picture." (or Pixal3D, Hunyuan, SHARP, MoGe, Meshy, Tripo — if you don't say, the agent lists the engines and asks)
 
 What the World Builder does, in order:
 
 ```mermaid
 flowchart LR
   A[Picture] --> B[world_create<br/>16-bit depth]
-  B --> C[world_add_objects<br/>SAM3 + image-to-3D]
-  C --> D[world_make_material<br/>describe + refine + Chord]
-  D --> E[world_make_sky /<br/>world_add_motion]
-  E --> F[world_calibrate<br/>match the look]
+  B --> Q{Which engine?<br/>you choose}
+  Q --> C[world_scene_model<br/>one model of the whole picture]
+  C --> E[world_environment<br/>web HDRI, else 8K sky]
+  E --> D[world_make_material<br/>the ground around it]
+  D --> F[world_calibrate<br/>match the look]
 ```
 
-The first object kind with a standard height (cars, people, doors) also fixes the camera tilt, so everything comes out the right size; that step rebuilds the world, which is why objects come first. A full garage run takes about 10 minutes: depth seconds, each object kind 1–2 min, each material 2 min, a motion loop 3–4 min.
+The world is built **around one 3D model of the whole picture** (item `scene`, in the World tab itself — there is no separate 3D tab). The engine is yours to choose; the agent lists them, including any other image-to-3D template in its library:
+
+| Engine | Gives | Placed by | Cost |
+| --- | --- | --- | --- |
+| TRELLIS.2 | textured PBR mesh | fitting to the picture | local, 3–6 min |
+| Pixal3D | TRELLIS.2 built pixel-aligned to the picture's camera | fitting | local, 3–6 min |
+| Hunyuan3D 2.1 | shape, painted with the picture from the camera | fitting | local, ~2 min |
+| SHARP | metric Gaussians in the camera's space, meshed with colours | the camera — exact | local, ~1 min |
+| MoGe-2 | metric mesh in the camera's space, textured with the picture | the camera — exact | local, ~20 s |
+| Meshy / Tripo / Rodin … | textured PBR mesh | fitting | API credits |
+
+*Fitting* sizes the model so its tallest parts are as tall as the picture's buildings (measured by its depth), grounds it where its rim meets the ground, and turns and moves it to match the picture's own 3D. Object engines re-imagine the scene (Meshy turned a street into an L-shaped block, which the fit laid into the street's V), so the fit is loose by nature; SHARP and MoGe match the picture exactly but only hold what it shows. Either way the terrain is flattened to the model's ground and the camera stands eye-high on it. If the size is wrong, say how tall things really are ("the houses are about 12 m").
+
+The **sky** comes from the web first: the agent reads the picture's light, searches Poly Haven's photographed HDRIs (CC0), looks at the best few against the picture and applies one — as the sky, the light and the reflections, turned so its sun stands where the world's does. Only when none fits does it generate an 8192×4096 sky.
+
+A run takes 5–15 minutes, mostly the scene model; `world_add_objects` (SAM3 + image-to-3D per object kind, 1–2 min each) is still there for things the scene model lacks.
 
 | Tool | Makes | Typical time |
 | --- | --- | --- |
 | `world_create` | The world: terrain, sky, light, the picture in 3D (hero view) | 20 s |
+| `world_scene_model` | One model of the whole picture, placed, sized, grounded; hides the hero view | 1–6 min |
+| `world_environment` | A matching Poly Haven HDRI (sky, light, reflections), or an 8K generated sky | 10–60 s |
 | `world_add_objects` | Copies of an object in the picture, where it shows them | 1–2 min |
 | `world_add_props` | Made-up objects from words, placed or scattered | 2 min |
 | `world_make_material` | Tileable PBR ground or ceiling, from the picture or from words | 2 min |
@@ -92,7 +111,8 @@ Every generative step is a ComfyUI workflow ("slot"), and you can swap one by as
 | texture_refine | Z-Image Turbo img2img | — |
 | texture_generate | Z-Image Turbo | — |
 | material | 4x upscale + Chord | — |
-| sky | Z-Image panorama | Qwen-Image 360 (needs its LoRA) |
+| sky | Z-Image panorama, 4x upscaled to 8192×4096 (only when no web HDRI fits) | the same at 2048×1024; Qwen-Image 360 (needs its LoRA) |
+| scene_model | TRELLIS.2 (but the agent asks you) | Pixal3D, Hunyuan3D 2.1, SHARP, MoGe, Meshy, Tripo, any image-to-3D template |
 | object_image | Z-Image + RMBG-2.0 | — |
 | motion | Wan 2.2 Fun Inpaint loop | — |
 
@@ -101,6 +121,7 @@ Any workflow can fill a slot, including one of your own or a template from agent
 ## Tips and current limits
 
 - **Pictures that work best**: eye-level photos with a clear floor or ground, and objects standing on it. Aerials, close-ups and heavy wide-angle distortion build poorly.
+- **HDR skies** load at 4K by default; 8K works but takes ~270 MB of graphics memory.
 - **Wrong sizes** (a car 0.9 m tall) mean the camera tilt is off: ask the agent to fit the camera from the cars; this rebuilds the world, so objects and materials are added again after.
 - **Rebuilds drop additions**: objects, materials, sky and motion added since are not carried over, so the agent rebuilds first and adds after.
 - **Generated objects** only know the side the picture shows; their far side is a colour blur. Meshy gives fully textured objects, at a cost.
