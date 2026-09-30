@@ -62,6 +62,34 @@ const VIEWABLE_TYPES = new Set(["IMAGE", "MASK", "VIDEO", "MESH"]);
 const SEND_NODE = "bEpicSendToViewer";
 let sinkSeq = 0;
 
+// What the sink is set to beyond the node's own defaults: show the picture
+// (no file written), and wire it to the branch.
+const SINK_SETTINGS = { tab_name: "", save_to_output: false, filename_prefix: "bEpic" };
+
+/**
+ * Every required input of the send node at its declared default, read from
+ * the node's own definition — so a widget added to the node later (as
+ * is_sequence / first_frame_number / padding were) can't leave the sink
+ * without a required input and have the queued prompt refused.
+ */
+async function sinkDefaults() {
+    let def = null;
+    try {
+        const resp = await api.fetchApi(`/object_info/${SEND_NODE}`);
+        def = (await resp.json())?.[SEND_NODE];
+    } catch (e) {
+        console.warn("[bEpicViewer] could not read the send node's inputs", e);
+    }
+    const out = {};
+    for (const [name, spec] of Object.entries(def?.input?.required || {})) {
+        const [type, opts] = Array.isArray(spec) ? spec : [spec, null];
+        if (opts && Object.prototype.hasOwnProperty.call(opts, "default")) out[name] = opts.default;
+        else if (Array.isArray(type) && type.length) out[name] = type[0];          // a combo: its first choice
+        else if (Array.isArray(opts?.options) && opts.options.length) out[name] = opts.options[0];
+    }
+    return out;
+}
+
 // ComfyUI annotates combo filenames with their source dir: "mask.png [input]".
 function stripAnnotation(value) {
     const m = /^(.*?)\s*\[(\w+)\]\s*$/.exec(value);
@@ -291,14 +319,7 @@ async function runBranchToViewer(node, target, ctx) {
     pruned[sinkId] = {
         class_type: SEND_NODE,
         _meta: { title: "bEpic Send To Image Viewer" },
-        inputs: {
-            input:           [rootId, target.slot],
-            tab_name:        "",
-            save_to_output:  false,
-            file_format:     "png",
-            fps:             24.0,
-            filename_prefix: "bEpic",
-        },
+        inputs: { ...(await sinkDefaults()), ...SINK_SETTINGS, input: [rootId, target.slot] },
     };
 
     panel.registerInlineSend(sinkId, { sourceNodeId: node.id, label: target.title });
