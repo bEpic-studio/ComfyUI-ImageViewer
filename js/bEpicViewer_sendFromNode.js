@@ -30,7 +30,7 @@ import { nodeToolKind, senderTabInfo } from "./bEpicViewer_nodeTools.js";
 
 const IMG_EXT = /\.(png|jpe?g|webp|gif|bmp|avif|tiff?|exr|dpx|tga|hdr|svg|ico)$/i;
 const VID_EXT = /\.(mp4|m4v|mov|webm|mkv|ogv|avi|mpe?g|wmv|flv)$/i;
-const MODEL_EXT = /\.(glb|gltf|fbx|obj|stl|ply|usda|usdc|usdz|usd)$/i;
+const MODEL_EXT = /\.(glb|gltf|fbx|obj|stl|ply|usda|usdc|usdz|usd|spz|splat|ksplat|sog)$/i;
 
 // Widget names loaders keep their media in, most specific first — a node with
 // both `video` and `path` widgets should be read from `video`.
@@ -56,7 +56,7 @@ const AYON_SKIP_NODES  = new Set();
 
 // Slot types the viewer can display. A node carrying one of these can be sent
 // even with no file of its own, by running the branch that feeds it.
-const VIEWABLE_TYPES = new Set(["IMAGE", "MASK", "VIDEO", "MESH"]);
+const VIEWABLE_TYPES = new Set(["IMAGE", "MASK", "VIDEO", "MESH", "SPLAT"]);
 
 // This extension's own node, used as a throwaway sink in the queued prompt.
 const SEND_NODE = "bEpicSendToViewer";

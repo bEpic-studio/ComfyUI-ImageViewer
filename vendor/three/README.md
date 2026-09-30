@@ -12,6 +12,13 @@ Upstream: https://github.com/mrdoob/three.js, npm package `three@0.180.0`
 | `EffectComposer.js`, `Pass.js`, `ShaderPass.js`, `MaskPass.js`, `RenderPass.js`, `UnrealBloomPass.js`, `OutputPass.js` | `three@0.180.0/examples/jsm/postprocessing/` (worlds: bloom and tone mapping) |
 | `CopyShader.js`, `LuminosityHighPassShader.js`, `OutputShader.js` | `three@0.180.0/examples/jsm/shaders/` (the passes above need them) |
 
+`spark.module.js` is **Spark 2.3.0** (`@sparkjsdev/spark`, World Labs, MIT — see
+`LICENSE.spark`), the Gaussian-splat renderer ComfyUI's own 3D viewer uses; it
+needs three ≥ r180. Its workers and WASM are inlined. Copied from `dist/`, with
+its imports rewritten like the addons' (`'three'` → `'./three.module.js'`,
+`'three/addons/postprocessing/Pass.js'` → `'./Pass.js'`) and its source-map line
+dropped.
+
 The addons are copied flat, so their imports are rewritten: `'three'` →
 `'./three.module.js'`, and `../utils/`, `../libs/`, `../curves/`, `../shaders/` → `./`. That
 and the patch below are the only changes.

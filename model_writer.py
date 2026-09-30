@@ -30,10 +30,11 @@ import re
 
 import folder_paths
 
-# Formats the viewer can open in a 3D tab. Splats and USDZ can be saved but not
-# shown; they still land in ./output when saving is on.
+# Formats the viewer can open in a 3D tab — Gaussian splats included (Spark
+# draws them; a .ply is a splat when its header says so).
+SPLAT_EXTS = {"spz", "splat", "ksplat", "sog"}
 VIEWABLE_EXTS = {"glb", "gltf", "fbx", "obj", "stl", "ply",
-                 "usd", "usda", "usdc", "usdz"}
+                 "usd", "usda", "usdc", "usdz"} | SPLAT_EXTS
 
 
 _USD_EXTS = ("usd", "usda", "usdc")
@@ -88,8 +89,45 @@ def is_file3d(x):
             and hasattr(x, "format"))
 
 
+def is_splat(x):
+    """A gaussian splat still in memory (core's SPLAT: what TripoSplat, File3D
+    to Splat and the splat transforms hand on)."""
+    return (x is not None and not is_file3d(x) and hasattr(x, "positions") and hasattr(x, "scales")
+            and hasattr(x, "rotations") and hasattr(x, "opacities") and hasattr(x, "sh"))
+
+
+def splat_to_file3d(splat):
+    """A SPLAT as a .ply File3D, written by core's own Create 3D File (from
+    Splat) — the .ply keeps the full spherical harmonics."""
+    from comfy_extras.nodes_gaussian_splat import SplatToFile3D
+    out = SplatToFile3D.execute(splat, "ply")
+    return out.result[0] if hasattr(out, "result") else out[0]
+
+
+def is_splat_file(data, ext):
+    """Whether a 3D file holds Gaussian splats: a splat format, or a .ply whose
+    vertices carry a scale and a rotation (as the viewer decides it)."""
+    ext = (ext or "").lower()
+    if ext in SPLAT_EXTS:
+        return True
+    if ext != "ply" or not data:
+        return False
+    head = bytes(data[:65536])
+    end = head.find(b"end_header")
+    if not head.startswith(b"ply") or end < 0:
+        return False
+    props, in_vertex = set(), False
+    for line in head[:end].decode("latin-1").splitlines():
+        w = line.split()
+        if w and w[0] == "element":
+            in_vertex = len(w) > 1 and w[1] == "vertex"
+        elif w and w[0] == "property" and in_vertex:
+            props.add(w[-1])
+    return {"scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"} <= props
+
+
 def is_model_input(x):
-    return is_mesh(x) or is_file3d(x)
+    return is_mesh(x) or is_file3d(x) or is_splat(x)
 
 
 def sniff_format(head):
@@ -362,12 +400,22 @@ def save_model_input(inp, filename_prefix, prompt=None, extra_pnginfo=None, file
     `ui["3d"]` list, frames are viewer frame dicts for the saved models (the
     materials and textures an OBJ or USD brings along are in saved_paths only).
     """
+    if is_splat(inp):
+        inp = splat_to_file3d(inp)
     out_root = folder_paths.get_output_directory()
     folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
         filename_prefix, out_root)
     os.makedirs(folder, exist_ok=True)
     want = (file_format or "").lower().lstrip(".")
     want = want if want in MODEL_FORMATS else None
+    if want and is_file3d(inp):
+        ext = _file3d_item(inp)
+        head = inp.get_bytes()[:65536] if ext == "ply" else b""
+        if is_splat_file(head, ext):
+            # A mesh format would keep the points and lose the splats.
+            print(f"\033[93m[bEpicSendToViewer] a gaussian splat can't be saved as .{want}; "
+                  f"saving the .{ext} it came as\033[0m")
+            want = None
 
     saved, results, frames = [], [], []
     if is_file3d(inp) and want is None:
@@ -412,6 +460,8 @@ def preview_model_input(inp, out_dir, prefix, run_tag):
     temp GC collects them with the rest of the node's runs."""
     os.makedirs(out_dir, exist_ok=True)
     frames = []
+    if is_splat(inp):
+        inp = splat_to_file3d(inp)
     if is_file3d(inp):
         ext = _file3d_item(inp)
         full = os.path.join(out_dir, f"{prefix}{run_tag}_0000.{ext}")

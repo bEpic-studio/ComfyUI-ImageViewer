@@ -44,9 +44,42 @@ function loadLibs() {
     return _libsPromise;
 }
 
+// Gaussian splats: drawn by Spark (World Labs, MIT; vendor/three/spark.module.js),
+// fetched the first time a scene has one. A .ply can be either a splat or a
+// mesh / point cloud; its header decides (isSplatPly).
+let _sparkPromise = null;
+function loadSpark() {
+    if (!_sparkPromise) {
+        _sparkPromise = import(api.apiURL("/bepic/lib/three/spark.module.js"))
+            .catch((e) => { _sparkPromise = null; throw e; });
+    }
+    return _sparkPromise;
+}
+
+export const SPLAT_FORMATS = ["spz", "splat", "ksplat", "sog"];
 export const MODEL_FORMATS = ["glb", "gltf", "fbx", "obj", "stl", "ply",
-                               "usd", "usda", "usdc", "usdz", "abc"];
-const _MODEL_RE = /\.(glb|gltf|fbx|obj|stl|ply|usda|usdc|usdz|usd|abc)$/i;
+                               "usd", "usda", "usdc", "usdz", "abc", ...SPLAT_FORMATS];
+const _MODEL_RE = /\.(glb|gltf|fbx|obj|stl|ply|usda|usdc|usdz|usd|abc|spz|splat|ksplat|sog)$/i;
+
+/**
+ * Whether a .ply holds Gaussian splats rather than a mesh or a point cloud:
+ * its vertices carry a scale and a rotation per point — the rule ComfyUI's own
+ * 3D viewer uses (isGaussianSplatPLY), so a file opens the same way in both.
+ */
+export function isSplatPly(buffer) {
+    const head = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 65536));
+    const text = new TextDecoder("latin1").decode(head);
+    const end = text.indexOf("end_header");
+    if (!text.startsWith("ply") || end < 0) return false;
+    const props = new Set();
+    let inVertex = false;
+    for (const line of text.slice(0, end).split(/\r?\n/)) {
+        const w = line.trim().split(/\s+/);
+        if (w[0] === "element") inVertex = w[1] === "vertex";
+        else if (w[0] === "property" && inVertex) props.add(w[w.length - 1]);
+    }
+    return ["scale_0", "scale_1", "scale_2", "rot_0", "rot_1", "rot_2", "rot_3"].every((p) => props.has(p));
+}
 
 /** The 3D format of a viewer frame, or "" when it isn't a model. */
 export function modelFormatOf(frame) {
@@ -307,6 +340,7 @@ export class Model3DView {
         this.renderer = renderer;
         this.canvas = canvas;
         canvas.style.filter = this.channelFilter;
+        this._ensureSpark();               // splats already in the scene need one for this renderer
 
         // Alt+RMB is a navigation drag, not a place to open a menu.
         canvas.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -581,6 +615,12 @@ export class Model3DView {
             this.scene.remove(this.gizmoHelper);
             this.gizmoHelper = null;
         }
+        // Spark's renderer belongs to the WebGL renderer it was made with; the
+        // rebuilt one gets its own (_ensureSpark, from _initRenderer).
+        if (this._spark) {
+            this.scene.remove(this._spark);
+            this._spark = null;
+        }
         if (this.controls) {
             this._target = this.controls.target.clone();
             this.controls.dispose();
@@ -735,6 +775,9 @@ export class Model3DView {
             return { object: group, animations: [] };
         }
         const buffer = await res.arrayBuffer();
+        if (SPLAT_FORMATS.includes(format) || (format === "ply" && isSplatPly(buffer))) {
+            return this._loadSplat(buffer, frame, format);
+        }
         if (format === "glb" || format === "gltf") {
             const gltf = await new GLTFLoader(manager).parseAsync(buffer, RES_PREFIX);
             gltf.scene.traverse((c) => {
@@ -780,6 +823,52 @@ export class Model3DView {
     }
 
     /**
+     * A Gaussian splat, as an ordinary object in the scene: Spark draws it
+     * (one SparkRenderer per view, added with the first splat), sorted
+     * together with every other splat and mixed with the meshes. Turned over
+     * about X the way ComfyUI's 3D viewer turns it — splat files are mostly in
+     * OpenCV's axes, Y down. A hidden box the size of the splat stands beside
+     * it: framing and picking measure geometry, which a splat has none of in
+     * three's sense, so the box is what they see.
+     */
+    async _loadSplat(buffer, frame, format) {
+        const { THREE } = this.libs;
+        this._sparkLib = await loadSpark();
+        const { SplatMesh } = this._sparkLib;
+        this._ensureSpark();
+        const name = (frame && (frame.name || frame.filename || frame.path)) || `splat.${format}`;
+        const splat = new SplatMesh({ fileBytes: new Uint8Array(buffer), fileName: String(name).split(/[\\/]/).pop() });
+        await splat.initialized;
+        splat.quaternion.set(1, 0, 0, 0);
+        splat.userData.bepicSplat = true;
+        const group = new THREE.Group();
+        group.add(splat);
+        const box = splat.getBoundingBox(false);
+        if (!box.isEmpty()) {
+            const size = box.getSize(new THREE.Vector3());
+            const bounds = new THREE.Mesh(
+                new THREE.BoxGeometry(Math.max(size.x, 1e-6), Math.max(size.y, 1e-6), Math.max(size.z, 1e-6)),
+                new THREE.MeshBasicMaterial({ visible: false }));
+            box.getCenter(bounds.position);
+            bounds.position.applyQuaternion(splat.quaternion);
+            bounds.quaternion.copy(splat.quaternion);
+            bounds.name = "splatbounds";
+            bounds.userData.bepicSplatBounds = true;
+            group.add(bounds);
+        }
+        this.requestRender();
+        return { object: group, animations: [] };
+    }
+
+    /** The view's SparkRenderer, once Spark is loaded and there is a renderer. */
+    _ensureSpark() {
+        if (this._spark || !this._sparkLib || !this.renderer) return;
+        this._spark = new this._sparkLib.SparkRenderer({ renderer: this.renderer });
+        this._spark.name = "bepic-spark";
+        this.scene.add(this._spark);
+    }
+
+    /**
      * A stand-in object spanning everything in the scene that has geometry, so
      * resetView can frame the lot. resetView measures with Box3.setFromObject,
      * which reads geometry — hence a box mesh rather than an empty group.
@@ -806,6 +895,7 @@ export class Model3DView {
     _disposeObject(object) {
         const shared = new Set(Object.values(this.materials || {}));
         object.traverse((c) => {
+            if (c.userData && c.userData.bepicSplat && c.dispose) { c.dispose(); return; }
             if (c.geometry) c.geometry.dispose();
             const mats = Array.isArray(c.material) ? c.material : [c.material];
             for (const m of mats) {
@@ -865,7 +955,8 @@ export class Model3DView {
         // An image plane keeps its picture: clay or normals would show
         // something that is not the picture, which is the whole point of it.
         for (const [mesh, original] of this._originals) {
-            if (mesh.name === "imageplane") continue;
+            // A splat's bounds box stays unseen whatever the look.
+            if (mesh.name === "imageplane" || mesh.name === "splatbounds") continue;
             mesh.material = this.materialMode === "original"
                 ? original : this.materials[this.materialMode];
         }
@@ -1587,9 +1678,13 @@ export class Model3DView {
     }
 
     _statsOf(object, format) {
-        let vertices = 0, triangles = 0, points = 0, meshes = 0;
+        let vertices = 0, triangles = 0, points = 0, meshes = 0, splats = 0;
         object.traverse((c) => {
-            if (c.isMesh) {
+            if (c.userData && c.userData.bepicSplat) {
+                splats += c.numSplats || (c.packedSplats && c.packedSplats.numSplats) || 0;
+            } else if (c.userData && c.userData.bepicSplatBounds) {
+                // not a mesh anyone made
+            } else if (c.isMesh) {
                 meshes++;
                 const pos = c.geometry && c.geometry.getAttribute("position");
                 if (pos) {
@@ -1601,12 +1696,12 @@ export class Model3DView {
                 if (pos) points += pos.count;
             }
         });
-        return { vertices, triangles, points, meshes, format };
+        return { vertices, triangles, points, meshes, splats, format };
     }
 
     _updateSceneStats() {
         if (!this.scene3d) return;
-        const total = { vertices: 0, triangles: 0, points: 0, meshes: 0, objects: 0, cameras: 0, shapes: 0, format: "scene" };
+        const total = { vertices: 0, triangles: 0, points: 0, meshes: 0, splats: 0, objects: 0, cameras: 0, shapes: 0, format: "scene" };
         for (const entry of this._entries.values()) {
             if (entry.camera) { total.cameras++; continue; }
             if (entry.item && entry.item.kind === "group") continue;
@@ -1616,6 +1711,7 @@ export class Model3DView {
             total.vertices += entry.stats.vertices;
             total.triangles += entry.stats.triangles;
             total.points += entry.stats.points;
+            total.splats += entry.stats.splats || 0;
             total.meshes += entry.stats.meshes;
         }
         this.stats = total;

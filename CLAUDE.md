@@ -52,6 +52,7 @@ State that must survive a reload goes through `queuePersistViewerState()` into `
 - `bEpicViewer_model3d.js` — turns that model into three.js objects and owns the viewport (camera, gizmo, grid, picking, Maya-style navigation, rendering a shot). Each item becomes `root → body → inner(offset) → geometry/children`; the split matters: pivot maths reads *body* space, frozen transforms live on *inner*.
 - `bEpicViewer_mixinPreviz.js` + `previzChannels` / `previzCurves` / `previzRender` / `previzUndo` — the panels and the edits (outliner, channel box, curve editor, render dialog, undo stack).
 - three.js is **vendored in `vendor/three/`, deliberately outside `js/`**, so ComfyUI does not serve or import it at startup; it is fetched on demand through `/bepic/lib/three/<name>`.
+- **Gaussian splats** (.spz, .splat, .ksplat, .sog, and a .ply whose vertices carry `scale_*` + `rot_*` — `isSplatPly`, ComfyUI's own rule) are drawn by Spark (`vendor/three/spark.module.js`, loaded with the first splat) as `SplatMesh` objects in the ordinary scene, turned 180° about X as ComfyUI's viewer turns them. One `SparkRenderer` per view (`_ensureSpark`, remade with the WebGL renderer). A splat has no geometry in three's sense, so a hidden `splatbounds` box beside it is what framing and picking measure. Server side, `model_writer` saves an in-memory `SPLAT` as .ply through core's `SplatToFile3D`, and never converts a splat to a mesh format (`is_splat_file`).
 
 ### Server side
 

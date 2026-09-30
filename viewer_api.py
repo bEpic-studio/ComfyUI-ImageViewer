@@ -35,7 +35,7 @@ except Exception:  # pragma: no cover
     usd_io = None
 
 _MODEL_EXTS = {".glb", ".gltf", ".fbx", ".obj", ".stl", ".ply",
-               ".usd", ".usda", ".usdc", ".usdz", ".abc"}
+               ".usd", ".usda", ".usdc", ".usdz", ".abc", ".spz", ".splat", ".ksplat", ".sog"}
 
 # three.js and its loaders, for the viewer's 3D tabs. Outside js/ so ComfyUI
 # doesn't import them at startup; served by /bepic/lib/three/<name> instead.

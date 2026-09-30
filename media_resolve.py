@@ -30,7 +30,7 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif", ".ico",
 # 3D formats a viewer tab can show (see model_writer.VIEWABLE_EXTS). USD is
 # shown through a GLB the server builds from the stage (usd_io.display_proxy).
 MODEL_EXTS = {".glb", ".gltf", ".fbx", ".obj", ".stl", ".ply",
-              ".usd", ".usda", ".usdc", ".usdz"}
+              ".usd", ".usda", ".usdc", ".usdz", ".spz", ".splat", ".ksplat", ".sog"}
 VIDEO_EXTS = {".mp4", ".m4v", ".mov", ".webm", ".mkv", ".ogv", ".avi", ".mpg",
               ".mpeg", ".wmv", ".flv"}
 

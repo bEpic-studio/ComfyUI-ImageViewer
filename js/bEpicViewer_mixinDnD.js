@@ -35,7 +35,7 @@ import { app } from "../../scripts/app.js";
 
 const _IMG_RE = /\.(png|jpe?g|webp|gif|bmp|avif|tiff?|svg|ico)$/i;
 const _VID_RE = /\.(mp4|m4v|mov|webm|mkv|ogv|avi)$/i;
-const _MODEL_RE = /\.(glb|gltf|fbx|obj|stl|ply|usda|usdc|usdz|usd|abc)$/i;
+const _MODEL_RE = /\.(glb|gltf|fbx|obj|stl|ply|usda|usdc|usdz|usd|abc|spz|splat|ksplat|sog)$/i;
 
 // How far each node of a multi-item drop is stepped from the last, so a
 // batch lands as a readable cascade instead of one unreachable pile.

@@ -149,6 +149,7 @@ export const ModelMixin = {
             : [`${(s.format || "3D").toUpperCase()} model`];
         if (s.triangles) bits.push(`${_fmtCount(s.vertices)} vertices`, `${_fmtCount(s.triangles)} triangles`);
         if (s.points) bits.push(`${_fmtCount(s.points)} points`);
+        if (s.splats) bits.push(`${_fmtCount(s.splats)} splats`);
         if (s.meshes > 1) bits.push(`${s.meshes} meshes`);
         if (s.animations) bits.push(`${s.animations} animation${s.animations > 1 ? "s" : ""}`);
         return bits.join(" · ");
