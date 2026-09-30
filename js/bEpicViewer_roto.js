@@ -6,11 +6,13 @@
 // image, where (0,0) is its top-left and (1,1) its bottom-right — but they are
 // NOT clamped to that range. A vertex, tangent or feather point may sit outside;
 // the matte is simply cropped to the image resolution when it is rasterized
-// (PIL clips the scan-fill, and the preview is clipped to the same rect by
-// _rotoImageClipId). Clamping instead would drag an outside vertex onto the
+// (PIL clips the scan-fill, and the preview is cropped to the same rect in
+// _rotoRenderComposite). Clamping instead would drag an outside vertex onto the
 // border and visibly change the curve of the edges either side of it.
 //   layer = {
 //     id, name, visible, invert, feather, blur, dilate, opacity, closed:true,
+//     mode: union | plus | minus | intersection | xor  — how it combines with
+//       the shapes before it in the list (Nuke's ChannelMerge; ROTO_MODES),
 //     transform:{tx,ty,rot,sx,sy,px,py},
 //     points:[ {x,y, cin?:{x,y}, cout?:{x,y}, feather?:{x,y}} ],
 //     keyframes?:{ "<frame>":[points] }
@@ -26,6 +28,19 @@ import { svgEl, toolHelp } from "./bEpicViewer_tools.js";
 import { readToolStore, writeToolStore, ROTO_WIDGET } from "./bEpicViewer_nodeTools.js";
 
 const HIT = 9;             // screen-px hit radius
+
+// How a shape combines with the shapes before it in the list: the operations of
+// the Nuke ChannelMerge node in bepic_templates, the shape as A, what the ones
+// before made as B, clamped to 0..1 after each. roto_raster.py (MODES, _merge)
+// renders the node's matte with the same formulas; keep the two identical.
+export const ROTO_MODES = ["union", "plus", "minus", "intersection", "xor"];
+const ROTO_MODE_TIPS = {
+    union: "A + B − A·B: add this shape (the default)",
+    plus: "A + B: add, doubling where soft edges overlap",
+    minus: "B − A: cut this shape out of the ones above",
+    intersection: "A · B: keep only where this shape and the ones above overlap",
+    xor: "A + B − 2·A·B: where one or the other, not both",
+};
 const DEF_TF = () => ({ tx: 0, ty: 0, rot: 0, sx: 1, sy: 1, px: 0.5, py: 0.5 });
 const lerp = (a, b, t) => a + (b - a) * t;
 const num = (v, d = 0) => (isFinite(+v) ? +v : d);
@@ -127,13 +142,14 @@ export const RotoMixin = {
     _rotoActivate(panel) {
         this._rotoPanel = panel;
         this._rotoBuildPanel();
-        // The shapes' curves get a dock panel of their own, the roto tool's to
-        // open and close (bEpicViewer_rotoCurves.js).
-        if (this._toolState.node) this.rotoShowCurves?.(true);
+        // The shapes' curves have a dock panel of their own
+        // (bEpicViewer_rotoCurves.js). It opens from the Roto Curves button
+        // only — never by itself when the tool comes up.
         this._rotoRefreshKfInfo();
     },
 
     _rotoDeactivate() {
+        this._rotoHideMask();
         this._roto.drawing = null;
         this._roto.drag = null;
         this._rotoRenderTimelineKeys();   // clears ticks
@@ -190,7 +206,7 @@ export const RotoMixin = {
         const bound = this._toolBoundNodeRow?.();
         if (bound) p.appendChild(bound);
 
-        // Layer list
+        // Layer list: each shape with its mode (how it combines with the ones above)
         this._rotoLayerList = el("div", "", "bepic-layer-list");
         p.appendChild(this._rotoLayerList);
 
@@ -253,6 +269,15 @@ export const RotoMixin = {
         const list = this._rotoLayerList;
         if (!list) return;
         list.innerHTML = "";
+        if (this._roto.layers.length) {
+            const head = el("div", "", "bepic-layer-head");
+            head.appendChild(el("span", "Shape", "nm"));
+            const mh = el("span", "Mode", "mode");
+            mh.title = "How each shape combines with the shapes above it in the list — Nuke's ChannelMerge";
+            head.appendChild(mh);
+            head.appendChild(el("span", "", "del"));
+            list.appendChild(head);
+        }
         this._roto.layers.forEach((layer, i) => {
             const row = el("div", "", "bepic-layer-row" + (i === this._roto.selLayer ? " sel" : ""));
             const vis = el("span", layer.visible ? "◉" : "◎", "vis");
@@ -266,9 +291,26 @@ export const RotoMixin = {
                 const v = dlgWin.prompt("Shape name:", layer.name || "");
                 if (v != null) { layer.name = v; this._rotoSave(); this._rotoRefreshLayerList(); }
             };
+            const mode = el("select", null, "mode");
+            for (const m of ROTO_MODES) {
+                const o = el("option", m);
+                o.value = m;
+                o.title = ROTO_MODE_TIPS[m];
+                mode.appendChild(o);
+            }
+            mode.value = layer.mode || "union";
+            mode.title = ROTO_MODE_TIPS[mode.value];
+            mode.onclick = (e) => e.stopPropagation();
+            mode.onmousedown = (e) => e.stopPropagation();
+            mode.onchange = () => {
+                layer.mode = mode.value;
+                mode.title = ROTO_MODE_TIPS[mode.value];
+                this._rotoSave();
+                this._toolRedraw();
+            };
             const del = el("span", "✕", "del");
             del.onclick = (e) => { e.stopPropagation(); this._rotoDeleteLayer(i); };
-            row.appendChild(vis); row.appendChild(nm); row.appendChild(del);
+            row.appendChild(vis); row.appendChild(nm); row.appendChild(mode); row.appendChild(del);
             row.onclick = () => {
                 this._roto.selLayer = i; this._roto.selPts = new Set();
                 this._roto.drawing = null;   // switching shapes ends any in-progress draw
@@ -570,14 +612,10 @@ export const RotoMixin = {
     _rotoRender() {
         const draw = this._toolDraw;
 
-        // Mask preview: soft-edged fill of every visible layer, including the
-        // per-point feather contour (see _rotoRenderPreview).
-        if (this._roto.showMask) {
-            for (const layer of this._roto.layers) {
-                if (!layer.visible) continue;
-                this._rotoRenderPreview(layer);
-            }
-        }
+        // Mask preview: the shapes' mattes combined by their modes, as the node
+        // will (see _rotoRenderComposite).
+        if (this._roto.showMask) this._rotoRenderComposite();
+        else this._rotoHideMask();
 
         // Outlines for every layer; handles only for the selected one.
         this._roto.layers.forEach((layer, li) => {
@@ -653,76 +691,155 @@ export const RotoMixin = {
         });
     },
 
-    // Preview one layer's matte. The soft edge is genuinely per-vertex: a stack
-    // of concentric contours between the core shape and each vertex's feather
-    // point builds a local ramp (only the feathered vertices fan out), mirroring
-    // roto_raster.py's distance ramp. The Feather/Blur sliders add a uniform
-    // Gaussian, Dilate an feMorphology grow/shrink, and Invert flips the filled
-    // region — so every menu control visibly affects the preview.
-    _rotoRenderPreview(layer) {
-        const draw = this._toolDraw;
-        const dpts = this._rotoDisplayPoints(layer);
-        const core = this._rotoPathD(dpts, true);
-        if (!core) return;
+    // ── mask preview ──────────────────────────────────────────────────────────
+    // The matte the node will make, on a canvas under the outlines: each shape
+    // drawn on its own — the per-vertex feather as a ramp of concentric
+    // contours between the shape and its feather curve (roto_raster.py's
+    // distance ramp), Dilate as a round-joined stroke of the outline, the
+    // Feather/Blur sliders as a Gaussian, then Invert and Opacity — and the
+    // shapes combined in list order by their modes, exactly as roto_raster.py
+    // combines them (ROTO_MODES). The global sliders are added to each shape's
+    // own, as an approximation of the node's global pass; the global Invert and
+    // the crop to the image are exact. Worked at up to ~0.9 Mpx and stretched
+    // to the viewport.
 
+    _rotoMaskCanvases(W, H) {
+        const doc = this.viewport.ownerDocument;
+        if (!this._rotoMaskCanvas) {
+            const cv = doc.createElement("canvas");
+            cv.className = "bepic-roto-mask";
+            cv.style.cssText = "position:absolute;left:0;top:0;pointer-events:none;z-index:41;";
+            this.viewport.insertBefore(cv, this._toolDraw);
+            this._rotoMaskCanvas = cv;
+            this._rotoScratch = [doc.createElement("canvas"), doc.createElement("canvas")];
+        }
+        for (const c of [this._rotoMaskCanvas, ...this._rotoScratch]) {
+            if (c.width !== W) c.width = W;
+            if (c.height !== H) c.height = H;
+        }
+        return this._rotoScratch;
+    },
+
+    _rotoHideMask() {
+        if (this._rotoMaskCanvas) this._rotoMaskCanvas.style.display = "none";
+    },
+
+    _rotoRenderComposite() {
+        const frameD = this._rotoFrameRectD();
+        // The viewport, not the draw layer's box: that svg keeps its default
+        // 300x150 and draws the rest as overflow; both start at the viewport's
+        // top-left, so the paths' coordinates hold on the canvas as they are.
+        const cw = this.viewport.clientWidth, ch = this.viewport.clientHeight;
+        if (!frameD || cw < 2 || ch < 2) { this._rotoHideMask(); return; }
+        const k = Math.min(1, Math.sqrt(900000 / (cw * ch)));
+        const W = Math.max(1, Math.round(cw * k)), H = Math.max(1, Math.round(ch * k));
+        const [sa, sb] = this._rotoMaskCanvases(W, H);
+        this._rotoMaskCanvas.style.width = cw + "px";
+        this._rotoMaskCanvas.style.height = ch + "px";
+        const g = this._roto.global;
         const spp = this._rotoScreenPerImgPx();
-        // Uniform softening from the sliders, in image px (matches roto_raster).
-        const featherImg = (+layer.feather || 0) + (+this._roto.global.feather || 0);
-        const blurImg    = (+layer.blur || 0)    + (+this._roto.global.blur || 0);
+        const n = W * H;
+
+        // The image rectangle: everything outside it is cropped off the matte.
+        const inImage = this._rotoAlphaOf(sa, k, (ctx) => ctx.fill(new Path2D(frameD)));
+        const acc = new Float32Array(n);
+        for (const layer of this._roto.layers) {
+            if (!layer.visible) continue;
+            const a = this._rotoLayerAlpha(layer, sa, sb, k, spp, g);
+            if (!a) {
+                // Nothing drawn is A = 0 everywhere, which only intersection notices.
+                if ((layer.mode || "union") === "intersection") acc.fill(0);
+                continue;
+            }
+            rotoMerge(layer.mode || "union", acc, a);
+        }
+        const out = this._rotoMaskCanvas.getContext("2d", { willReadFrequently: true });
+        const img = out.createImageData(W, H);
+        const px = img.data;
+        for (let i = 0, j = 0; i < n; i++, j += 4) {
+            let v = acc[i];
+            if (g.invert) v = 1 - v;
+            v *= inImage[i];
+            px[j] = 255; px[j + 1] = 120; px[j + 2] = 0;
+            px[j + 3] = Math.round(v * 0.45 * 255);
+        }
+        out.putImageData(img, 0, 0);
+        this._rotoMaskCanvas.style.display = "block";
+    },
+
+    /** The alpha a draw callback leaves on a cleared canvas, 0..1 per pixel. */
+    _rotoAlphaOf(canvas, k, draw) {
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.setTransform(k, 0, 0, k, 0, 0);
+        ctx.fillStyle = "#fff";
+        ctx.strokeStyle = "#fff";
+        draw(ctx);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        const a = new Float32Array(canvas.width * canvas.height);
+        for (let i = 0, j = 3; i < a.length; i++, j += 4) a[i] = d[j] / 255;
+        return a;
+    },
+
+    /** One shape's matte as alpha (0..1, canvas pixels), or null when it draws nothing. */
+    _rotoLayerAlpha(layer, sa, sb, k, spp, g) {
+        const dpts = this._rotoDisplayPoints(layer);
+        const coreD = dpts.length >= 3 ? this._rotoPathD(dpts, true) : null;
+        if (!coreD) return null;
+        const core = new Path2D(coreD);
+        // Uniform softening and grow/shrink from the sliders, image px → screen px.
+        const featherImg = (+layer.feather || 0) + (+g.feather || 0);
+        const blurImg    = (+layer.blur || 0)    + (+g.blur || 0);
         const sigmaScr   = Math.min(80, (featherImg * 0.5 + blurImg) * spp);
-        const dilImg     = (+layer.dilate || 0) + (+this._roto.global.dilate || 0);
+        const dilImg     = (+layer.dilate || 0) + (+g.dilate || 0);
         const dilScr     = Math.min(60, Math.abs(dilImg) * spp);
 
-        // Clip and filter go on the same <g>: SVG applies the filter first and
-        // clips its result, so softening that spills past the image edge is
-        // cropped exactly the way roto_raster.py crops it (it blurs an already
-        // cropped array). Order matters — clipping first would fade the matte
-        // out at the frame border instead of cutting it off there.
-        const attrs = {};
-        const clipId = this._rotoImageClipId();
-        if (clipId) attrs["clip-path"] = `url(#${clipId})`;
-        if (sigmaScr > 0.3 || dilScr >= 1) {
-            const defs = this._rotoDefs();
-            const fid = "bepic-rf-" + (layer.id || "x");
-            const filt = svgEl("filter", { id: fid, x: "-60%", y: "-60%", width: "220%", height: "220%" });
-            let src = "SourceGraphic";
-            if (dilScr >= 1) {
-                filt.appendChild(svgEl("feMorphology", {
-                    in: src, operator: dilImg > 0 ? "dilate" : "erode",
-                    radius: dilScr.toFixed(2), result: "morph",
-                }));
-                src = "morph";
+        const shape = (ctx) => {
+            // Per-vertex feather: nested contours from the feather curve in to
+            // the shape, each adding just enough cover that it ramps 0 → 1 evenly.
+            if (dpts.some((p) => p.feather)) {
+                const BANDS = 6;
+                let prev = 0;
+                for (let j = 1; j <= BANDS; j++) {
+                    const bd = this._rotoPathD(this._rotoFeatherPts(dpts, 1 - (j - 1) / BANDS), true);
+                    const c = j / (BANDS + 1);
+                    if (bd) {
+                        ctx.globalAlpha = (c - prev) / (1 - prev);
+                        ctx.fill(new Path2D(bd));
+                    }
+                    prev = c;
+                }
+                ctx.globalAlpha = 1;
             }
-            if (sigmaScr > 0.3) filt.appendChild(svgEl("feGaussianBlur", { in: src, stdDeviation: sigmaScr.toFixed(2) }));
-            defs.appendChild(filt);
-            attrs.filter = `url(#${fid})`;
-        }
-        const parent = svgEl("g", attrs);
-        draw.appendChild(parent);
-
-        const base = "255,120,0";
-        if (layer.invert) {
-            // Inverted matte: fill everything outside the shape (even-odd rule
-            // punches the core out of a full-frame rect).
-            const frame = this._rotoFrameRectD();
-            if (frame) parent.appendChild(svgEl("path", {
-                d: frame + " " + core, "fill-rule": "evenodd", stroke: "none",
-                fill: `rgba(${base},.30)`,
-            }));
-            return;
-        }
-
-        // Per-vertex feather ramp: concentric bands from feather contour inward.
-        // Non-feathered vertices coincide across all bands, so the ramp appears
-        // only where a feather handle was pulled.
-        if (dpts.some((p) => p.feather)) {
-            const BANDS = 5;
-            for (let k = BANDS; k >= 1; k--) {
-                const bd = this._rotoPathD(this._rotoFeatherPts(dpts, k / BANDS), true);
-                if (bd) parent.appendChild(svgEl("path", { d: bd, stroke: "none", fill: `rgba(${base},.09)` }));
+            ctx.fill(core);
+            if (dilScr >= 0.5) {
+                ctx.lineJoin = "round";
+                ctx.lineWidth = 2 * dilScr;
+                if (dilImg < 0) ctx.globalCompositeOperation = "destination-out";
+                ctx.stroke(core);
+                ctx.globalCompositeOperation = "source-over";
             }
+        };
+        let a;
+        if (sigmaScr > 0.3) {
+            // Drawn, then blurred onto the second canvas; filter lengths are in
+            // canvas pixels, hence * k.
+            this._rotoAlphaOf(sa, k, shape);
+            a = this._rotoAlphaOf(sb, k, (ctx) => {
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.filter = `blur(${(sigmaScr * k).toFixed(2)}px)`;
+                ctx.drawImage(sa, 0, 0);
+                ctx.filter = "none";
+            });
+        } else {
+            a = this._rotoAlphaOf(sa, k, shape);
         }
-        parent.appendChild(svgEl("path", { d: core, stroke: "none", fill: `rgba(${base},.34)` }));
+        const op = Math.max(0, Math.min(1, layer.opacity == null ? 1 : +layer.opacity));
+        if (layer.invert) for (let i = 0; i < a.length; i++) a[i] = (1 - a[i]) * op;
+        else if (op !== 1) for (let i = 0; i < a.length; i++) a[i] *= op;
+        return a;
     },
 
     // The outer-feather counterpart of a display vertex: its feather point plus
@@ -813,32 +930,6 @@ export const RotoMixin = {
         const c = [this._normToDraw(0, 0), this._normToDraw(1, 0), this._normToDraw(1, 1), this._normToDraw(0, 1)];
         if (c.some((p) => !p)) return null;
         return `M ${c[0].x} ${c[0].y} L ${c[1].x} ${c[1].y} L ${c[2].x} ${c[2].y} L ${c[3].x} ${c[3].y} Z`;
-    },
-
-    // Shared <defs> for the preview's filters and clip. _toolRedraw wipes the
-    // draw layer every frame, so these are rebuilt per redraw rather than reused.
-    _rotoDefs() {
-        const draw = this._toolDraw;
-        let defs = draw.querySelector("defs.bepic-rf-defs");
-        if (!defs) { defs = svgEl("defs", { class: "bepic-rf-defs" }); draw.appendChild(defs); }
-        return defs;
-    },
-
-    // A clipPath of the image rectangle. Vertices may sit outside the frame, but
-    // the mask roto_raster.py produces is cropped to the image resolution — so
-    // the preview is clipped to match instead of spilling across the viewport.
-    // Returns null when the image rect can't be mapped (nothing on screen).
-    _rotoImageClipId() {
-        const d = this._rotoFrameRectD();
-        if (!d) return null;
-        const id = "bepic-roto-clip";
-        const defs = this._rotoDefs();
-        if (!defs.querySelector("#" + id)) {
-            const cp = svgEl("clipPath", { id });
-            cp.appendChild(svgEl("path", { d }));
-            defs.appendChild(cp);
-        }
-        return id;
     },
 
     // Oriented box around the current multi-point selection. It carries the
@@ -1417,6 +1508,16 @@ export const RotoMixin = {
 
 // ── module-local helpers ──────────────────────────────────────────────────────
 
+/** B combined with A by a shape's mode, in place in `b` — roto_raster._merge. */
+function rotoMerge(mode, b, a) {
+    const n = b.length;
+    if (mode === "plus")              for (let i = 0; i < n; i++) b[i] = Math.min(1, b[i] + a[i]);
+    else if (mode === "minus")        for (let i = 0; i < n; i++) b[i] = Math.max(0, b[i] - a[i]);
+    else if (mode === "intersection") for (let i = 0; i < n; i++) b[i] = b[i] * a[i];
+    else if (mode === "xor")          for (let i = 0; i < n; i++) b[i] = Math.min(1, Math.max(0, b[i] + a[i] - 2 * a[i] * b[i]));
+    else                              for (let i = 0; i < n; i++) b[i] = Math.min(1, b[i] + a[i] - a[i] * b[i]);
+}
+
 function normalizeLayer(l) {
     return {
         id: l.id || ("l" + (_rotoIdSeq++)),
@@ -1427,6 +1528,7 @@ function normalizeLayer(l) {
         blur: +l.blur || 0,
         dilate: +l.dilate || 0,
         opacity: l.opacity == null ? 1 : +l.opacity,
+        mode: ROTO_MODES.includes(l.mode) ? l.mode : "union",
         ease: Math.max(0, Math.min(1, +l.ease || 0)),
         closed: true,
         transform: Object.assign(DEF_TF(), l.transform || {}),

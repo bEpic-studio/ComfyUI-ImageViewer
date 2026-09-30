@@ -32,6 +32,7 @@ import {
     nodeToolKind,
     leadSelectedNode,
     createToolNode,
+    selectedToolNode,
     readToolStore,
     writeToolStore,
     SAM3_POS_WIDGET,
@@ -261,6 +262,14 @@ export const ToolsMixin = {
             .bepic-layer-row .vis { cursor:pointer; color:#aaa; }
             .bepic-layer-row .vis:hover { color:#f60; }
             .bepic-layer-row .del { cursor:pointer; color:#666; }
+            .bepic-layer-row select.mode, .bepic-layer-head .mode { flex:0 0 92px; width:92px; }
+            .bepic-layer-row select.mode { background:#1d1d1d; color:#ccc; border:1px solid #3a3a3a;
+                border-radius:3px; font-size:11px; padding:1px 2px; min-height:0; height:20px; }
+            .bepic-layer-head { display:flex; align-items:center; gap:4px; padding:2px 4px;
+                color:#777; font-size:10px; text-transform:uppercase; letter-spacing:.04em;
+                border-bottom:1px solid #2a2a2a; position:sticky; top:0; background:#161616; }
+            .bepic-layer-head .nm { flex:1; padding-left:16px; }
+            .bepic-layer-head .del { flex:0 0 10px; }
             .bepic-layer-row .del:hover { color:#e66; }
             /* Context hint that tracks what the cursor is over (bottom-left,
                above the full-width path bar). */
@@ -327,7 +336,10 @@ export const ToolsMixin = {
      * A toolbar button. Annotate toggles its tool. Roto and SAM3 make a node:
      * a new Roto / SAM3 Collector hung off the selected (or the tab's) image
      * and left selected, and selecting it is what brings the tool up — the same
-     * as selecting an existing one on the canvas (_toolFollowSelection).
+     * as selecting an existing one on the canvas (_toolFollowSelection). With a
+     * node of that kind already selected there is nothing to make: the button
+     * brings up that node's shapes and parameters (it used to hang a second
+     * Roto off the selected one's output).
      * Pressing the button of the tool that is on turns it off; the two SAM3
      * tools share a collector, so going from one to the other only switches.
      */
@@ -342,6 +354,13 @@ export const ToolsMixin = {
         const kind = TOOL_NODE_KIND[tool];
         if (!kind) { this._toolBySelection = false; this.setActiveTool(tool); return; }
         if (TOOL_NODE_KIND[active] === kind && this._toolState.node) { this.setActiveTool(tool); return; }
+        if (selectedToolNode(kind)) {
+            // setActiveTool binds to the selected node (ensureToolNode's first rule).
+            this._toolFollowSig = graphSelectionSignature();
+            this._toolBySelection = true;
+            this.setActiveTool(tool);
+            return;
+        }
         const node = createToolNode(this, this.activeTab, kind);
         // The new node is the selection now; the tool follows it from here on,
         // so note the selection as seen rather than have the next tick redo it.
@@ -703,6 +722,8 @@ export const ToolsMixin = {
 
     _toolClearDraw() {
         while (this._toolDraw.firstChild) this._toolDraw.removeChild(this._toolDraw.firstChild);
+        // The roto mask preview is a canvas beside the draw layer, not in it.
+        this._rotoHideMask?.();
     },
 
     _toolRedraw() {

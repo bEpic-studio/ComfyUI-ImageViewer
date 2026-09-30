@@ -415,7 +415,7 @@ export function leadSelectedNode() {
 }
 
 /** A tool node of this kind picked on the canvas, if the user has one selected. */
-function selectedToolNode(kind) {
+export function selectedToolNode(kind) {
     const type = TOOL_NODE_TYPES[kind];
     if (!type) return null;
     return selectedGraphNodes().find((n) => n.type === type) || null;

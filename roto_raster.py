@@ -20,8 +20,9 @@ Design notes / approximations (documented so callers know the fidelity):
     fallback keyed off the mean feather offset.
   * dilate / erode use SciPy grey morphology when available, else PIL
     Max/Min filters.
-  * Shapes in a layer stack are unioned (max), matching Nuke's default union
-    of roto shapes.  Per-shape `invert`/`opacity` and a `global` block of
+  * Shapes combine in list order, each by its `mode` (union, plus, minus,
+    intersection, xor — Nuke's ChannelMerge operations, see MODES; union
+    by default).  Per-shape `invert`/`opacity` and a `global` block of
     invert/blur/dilate/feather are also honoured.
 
 Everything is wrapped so a malformed payload yields a zero mask rather than
@@ -45,6 +46,34 @@ except Exception:
 
 
 # ── small helpers ────────────────────────────────────────────────────────────
+
+# How a shape combines with everything below it in the list — the operations of
+# the Nuke ChannelMerge node in bepic_templates (bEpicChannelMerge), with the
+# shape as A and what the shapes before it made as B, clamped to 0..1 after
+# each one, as a chain of those nodes would be. Must match the viewer's
+# ROTO_MODES (bEpicViewer_roto.js).
+MODES = ("union", "plus", "minus", "intersection", "xor")
+
+
+def _merge(mode, b, a):
+    """B (what is there) combined with A (this shape's matte), in place in b."""
+    if mode == "plus":
+        np.add(b, a, out=b)
+    elif mode == "minus":
+        np.subtract(b, a, out=b)
+    elif mode == "intersection":
+        np.multiply(b, a, out=b)
+    elif mode == "xor":
+        b += a - 2.0 * a * b
+    else:                                   # union
+        b += a - a * b
+    np.clip(b, 0.0, 1.0, out=b)
+
+
+def layer_mode(layer):
+    m = str(layer.get("mode") or "union").lower()
+    return m if m in MODES else "union"
+
 
 def _num(v, default=0.0):
     try:
@@ -416,6 +445,7 @@ def _layer_plan(layer, W, H, frame):
         "feather": per_shape_feather,
         "dilate": _num(layer.get("dilate"), 0.0), "blur": _num(layer.get("blur"), 0.0),
         "invert": bool(layer.get("invert")), "opacity": _num(layer.get("opacity"), 1.0),
+        "mode": layer_mode(layer),
     }
 
 
@@ -424,7 +454,7 @@ def _plan_key(plan):
         return None
     r = lambda poly: tuple((round(x, 2), round(y, 2)) for (x, y) in poly) if poly else None
     return (r(plan["shape"]), r(plan["feather_poly"]), round(plan["fpx"], 3), plan["feather"],
-            plan["dilate"], plan["blur"], plan["invert"], plan["opacity"])
+            plan["dilate"], plan["blur"], plan["invert"], plan["opacity"], plan["mode"])
 
 
 def _region(polys, W, H, pad):
@@ -569,9 +599,22 @@ def rasterize(roto_data, W, H, frame_count=1):
                     m, box = _render_plan(plan, W, H)
                 except Exception:
                     m = None
-                if m is not None:
-                    x0, y0, x1, y1 = box
-                    np.maximum(acc[y0:y1, x0:x1], m, out=acc[y0:y1, x0:x1])
+                mode = plan["mode"]
+                if m is None:
+                    # Nothing drawn: A is 0 everywhere, which only intersection notices.
+                    if mode == "intersection":
+                        acc[...] = 0.0
+                    continue
+                x0, y0, x1, y1 = box
+                if mode == "intersection":
+                    # A is 0 outside the shape's region: everything there goes.
+                    inside = acc[y0:y1, x0:x1] * m
+                    acc[...] = 0.0
+                    acc[y0:y1, x0:x1] = inside
+                else:
+                    # Outside the region A is 0, and union, plus, minus and xor
+                    # all leave B as it is there.
+                    _merge(mode, acc[y0:y1, x0:x1], m)
             # global post, over the part of the frame that has anything in it
             if g_dilate or g_feather > 0 or g_blur > 0:
                 box = _nonzero_box(acc, g_reach, W, H)

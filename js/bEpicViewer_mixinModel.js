@@ -87,6 +87,8 @@ export const ModelMixin = {
             this.viewport.classList.add("model-mode");
             // The drawing tools' panels have nothing to do on a 3D tab.
             this._toolShowDock?.(false);
+            // Put away, and brought back on the way out only if it was open.
+            this._rotoCurvesWereOpen = !!this.isPanelDocked?.("rotoCurves");
             this.rotoShowCurves?.(false);
         }
         this._applyModelLook();
@@ -117,7 +119,7 @@ export const ModelMixin = {
         const tool = this._toolState && this._toolState.active;
         if (tool && tool !== "none") {
             this._toolShowDock?.(true);
-            if (tool === "roto" && this._toolState.node) this.rotoShowCurves?.(true);
+            if (tool === "roto" && this._toolState.node && this._rotoCurvesWereOpen) this.rotoShowCurves?.(true);
         }
         if (this._model3d) this._model3d.hide();
         // The scene's keyframe ticks sit on the shared timeline strip; an image
