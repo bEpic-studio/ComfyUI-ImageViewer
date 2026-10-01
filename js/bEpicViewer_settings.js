@@ -300,14 +300,94 @@ function defs() {
 export function viewerSettings(getPanel) {
     if (getPanel) _getPanel = getPanel;
     const list = defs();
-    for (const d of list) DEFAULTS[d.id] = d.defaultValue;
+    for (const d of list) {
+        DEFAULTS[d.id] = d.defaultValue;
+        if (d.id === PREF.folders) continue;          // the server's list, not a setting
+        // Every change is also written to the per-user file (see below).
+        const own = d.onChange;
+        d.onChange = (value, old) => {
+            if (own) own(value, old);
+            keepForUser(d.id, value);
+        };
+    }
     return list;
 }
 // Defaults are known before registration too (pref() falls back to them).
 for (const d of defs()) DEFAULTS[d.id] = d.defaultValue;
 
-/** Called once ComfyUI's settings have loaded. */
-export function applyStartupPrefs() {
+// ── Kept per user, not per ComfyUI user directory ────────────────────────────
+//
+// ComfyUI stores settings in its user directory, and a launcher can give every
+// project its own (AYON does), so a setting changed in one project would be at
+// its default in the next. The server keeps the viewer's settings in one file
+// per OS user (viewer_settings.py): loaded here at startup and laid over
+// ComfyUI's values, and written back on every change. ComfyUI's dialog stays
+// the place they are edited.
+
+let _userSync = false;        // true once the startup load is done: changes are written from then
+const _pending = {};
+let _pendingTimer = null;
+
+function keepForUser(id, value) {
+    if (!_userSync || value === undefined) return;
+    _pending[id] = value;
+    if (_pendingTimer) return;
+    _pendingTimer = setTimeout(flushUserSettings, 300);
+}
+
+async function flushUserSettings() {
+    _pendingTimer = null;
+    const values = { ..._pending };
+    for (const k of Object.keys(_pending)) delete _pending[k];
+    if (!Object.keys(values).length) return;
+    try {
+        const res = await api.fetchApi("/bepic/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ values }),
+        });
+        // 404: a ComfyUI still running the viewer's previous version. The
+        // settings then live in ComfyUI's own store only, as before.
+        if (!res.ok && res.status !== 404) console.warn("[bEpicViewer] settings not saved for the user:", res.status);
+    } catch (e) {
+        console.warn("[bEpicViewer] settings not saved for the user", e);
+    }
+}
+
+async function loadUserSettings() {
+    let stored = null;
+    try {
+        const res = await api.fetchApi("/bepic/settings", { cache: "no-store" });
+        if (res.ok) stored = (await res.json()).values;
+    } catch (e) { /* server without the route, or unreachable */ }
+    if (!stored || typeof stored !== "object") return;
+
+    const seed = {};
+    for (const id of Object.keys(DEFAULTS)) {
+        if (id === PREF.folders) continue;
+        const here = pref(id);
+        if (id in stored) {
+            // The user's file wins over what this ComfyUI user directory holds.
+            if (stored[id] !== here) {
+                try { await app.extensionManager.setting.set(id, stored[id]); }
+                catch (e) { console.warn(`[bEpicViewer] could not apply ${id}`, e); }
+            }
+        } else if (here !== DEFAULTS[id]) {
+            // Changed here before the file existed (or before it knew this
+            // setting): take it over rather than lose it.
+            seed[id] = here;
+        }
+    }
+    if (Object.keys(seed).length) {
+        Object.assign(_pending, seed);
+        await flushUserSettings();
+    }
+}
+
+/** Called once ComfyUI's settings have loaded, before the panel is built. */
+export async function applyStartupPrefs() {
+    await loadUserSettings();
+    _userSync = true;
     applySceneDefaults();
 }
 

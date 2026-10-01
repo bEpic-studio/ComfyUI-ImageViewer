@@ -1326,7 +1326,9 @@ app.registerExtension({
     ],
 
     async setup() {
-        applyStartupPrefs();
+        // Before the panel exists: it reads its defaults as it is built.
+        try { await applyStartupPrefs(); }
+        catch (e) { console.warn("bEpicViewer: settings failed to load", e); }
         globalViewerPanel = document.createElement("bepic-viewer-panel");
         document.body.appendChild(globalViewerPanel);
         _setViewerPanelToggle(false, { syncDisplay: true });

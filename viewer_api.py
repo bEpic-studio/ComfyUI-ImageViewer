@@ -8,6 +8,7 @@ import folder_paths
 from server import PromptServer
 
 from . import path_access
+from . import viewer_settings
 
 try:
     from . import media_resolve
@@ -1096,6 +1097,23 @@ try:
             except (OSError, ValueError) as e:
                 return web.json_response({"error": str(e)}, status=400)
 
+        async def _bepic_settings(request):
+            """The viewer's settings as kept per OS user (viewer_settings.py):
+            ComfyUI's own store can be per project, these are not."""
+            return web.json_response({"values": viewer_settings.load(),
+                                      "file": viewer_settings.path()})
+
+        async def _bepic_settings_save(request):
+            try:
+                body = await request.json()
+                values = viewer_settings.update(body.get("values") if isinstance(body, dict) else None)
+            except ValueError as e:
+                return web.json_response({"error": str(e)}, status=400)
+            except OSError as e:
+                return web.json_response(
+                    {"error": f"could not write {viewer_settings.path()}: {e}"}, status=500)
+            return web.json_response({"values": values, "file": viewer_settings.path()})
+
         # Routes that change something on the machine — writing a render,
         # deleting cache files — are POST only. A GET can be set off by a link
         # or an <img> on any page the user has open; a JSON POST from another
@@ -1146,6 +1164,10 @@ try:
         _safe_add("GET", "/api/bepic/viewer", _bepic_viewer_page)
         _safe_add("GET", "/imageviewer", _bepic_viewer_page)
         _safe_add("GET", "/api/imageviewer", _bepic_viewer_page)
+        _safe_add("GET", "/bepic/settings", _bepic_settings)
+        _safe_add("GET", "/api/bepic/settings", _bepic_settings)
+        _safe_add("POST", "/bepic/settings", _bepic_settings_save)
+        _safe_add("POST", "/api/bepic/settings", _bepic_settings_save)
         _safe_add("GET", "/bepic/roots", _bepic_roots)
         _safe_add("GET", "/api/bepic/roots", _bepic_roots)
         _safe_add("POST", "/bepic/roots", _bepic_roots_save)
