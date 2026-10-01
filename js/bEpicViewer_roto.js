@@ -188,6 +188,25 @@ export const RotoMixin = {
         this._toolRedraw();
     },
 
+    /**
+     * Move a shape to another place in the list. The order is not cosmetic: a
+     * shape's mode combines it with the shapes ABOVE it, so moving one changes
+     * the matte. The selection stays on the shape it was on.
+     */
+    _rotoMoveLayer(from, to) {
+        const layers = this._roto.layers;
+        to = Math.max(0, Math.min(layers.length - 1, to));
+        if (from < 0 || from >= layers.length || from === to) return;
+        const selected = this._rotoCurLayer();
+        const [layer] = layers.splice(from, 1);
+        layers.splice(to, 0, layer);
+        this._roto.selLayer = selected ? layers.indexOf(selected) : -1;
+        this._rotoSave();
+        this._rotoRefreshLayerList();
+        this._rotoRefreshKfInfo();
+        this._toolRedraw();
+    },
+
     _rotoBuildPanel() {
         // The Tool dock panel can ask for a fill while it is still opening,
         // before _rotoActivate has handed the panel over.
@@ -215,7 +234,15 @@ export const RotoMixin = {
         addB.onclick = () => this._rotoAddLayer();
         const delB = el("button", "Delete", "bepic-act bepic-danger");
         delB.onclick = () => this._rotoDeleteLayer(this._roto.selLayer);
+        // Rows drag too; these move the selected shape one place.
+        const upB = el("button", "↑", "bepic-act bepic-layer-move");
+        upB.title = "Move the selected shape up (it combines with fewer shapes)";
+        upB.onclick = () => this._rotoMoveLayer(this._roto.selLayer, this._roto.selLayer - 1);
+        const downB = el("button", "↓", "bepic-act bepic-layer-move");
+        downB.title = "Move the selected shape down (it combines with more shapes)";
+        downB.onclick = () => this._rotoMoveLayer(this._roto.selLayer, this._roto.selLayer + 1);
         layBtns.appendChild(addB); layBtns.appendChild(delB);
+        layBtns.appendChild(upB); layBtns.appendChild(downB);
         p.appendChild(layBtns);
 
         // Per-shape sliders
@@ -271,7 +298,9 @@ export const RotoMixin = {
         list.innerHTML = "";
         if (this._roto.layers.length) {
             const head = el("div", "", "bepic-layer-head");
-            head.appendChild(el("span", "Shape", "nm"));
+            const nh = el("span", "Shape", "nm");
+            nh.title = "Drag a shape up or down to change the order";
+            head.appendChild(nh);
             const mh = el("span", "Mode", "mode");
             mh.title = "How each shape combines with the shapes above it in the list — Nuke's ChannelMerge";
             head.appendChild(mh);
@@ -311,6 +340,43 @@ export const RotoMixin = {
             const del = el("span", "✕", "del");
             del.onclick = (e) => { e.stopPropagation(); this._rotoDeleteLayer(i); };
             row.appendChild(vis); row.appendChild(nm); row.appendChild(mode); row.appendChild(del);
+            // Drag a row to reorder. The drop lands above or below the row under
+            // the cursor, whichever half it is in.
+            row.draggable = true;
+            row.ondragstart = (e) => {
+                this._rotoDragLayer = i;
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", layer.name || "");
+                row.classList.add("dragging");
+            };
+            row.ondragend = () => {
+                this._rotoDragLayer = null;
+                list.querySelectorAll(".dragging, .drop-above, .drop-below")
+                    .forEach((r) => r.classList.remove("dragging", "drop-above", "drop-below"));
+            };
+            row.ondragover = (e) => {
+                if (this._rotoDragLayer == null) return;      // not one of our rows
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = "move";
+                const r = row.getBoundingClientRect();
+                const below = e.clientY > r.top + r.height / 2;
+                row.classList.toggle("drop-above", !below);
+                row.classList.toggle("drop-below", below);
+            };
+            row.ondragleave = () => row.classList.remove("drop-above", "drop-below");
+            row.ondrop = (e) => {
+                const from = this._rotoDragLayer;
+                if (from == null) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const r = row.getBoundingClientRect();
+                let to = i + (e.clientY > r.top + r.height / 2 ? 1 : 0);
+                if (from < to) to -= 1;                       // its own slot closes up first
+                this._rotoDragLayer = null;
+                this._rotoMoveLayer(from, to);
+                this._rotoRefreshLayerList();                 // clears the drop marks on a no-op
+            };
             row.onclick = () => {
                 this._roto.selLayer = i; this._roto.selPts = new Set();
                 this._roto.drawing = null;   // switching shapes ends any in-progress draw

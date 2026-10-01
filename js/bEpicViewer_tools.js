@@ -271,6 +271,11 @@ export const ToolsMixin = {
             .bepic-layer-head .nm { flex:1; padding-left:16px; }
             .bepic-layer-head .del { flex:0 0 10px; }
             .bepic-layer-row .del:hover { color:#e66; }
+            .bepic-layer-row[draggable="true"] { cursor:grab; }
+            .bepic-layer-row.dragging { opacity:.4; }
+            .bepic-layer-row.drop-above { box-shadow:0 -2px 0 #f60; }
+            .bepic-layer-row.drop-below { box-shadow:0 2px 0 #f60; }
+            .bepic-layer-move { flex:0 0 28px !important; padding-left:0; padding-right:0; }
             /* Context hint that tracks what the cursor is over (bottom-left,
                above the full-width path bar). */
             .bepic-tool-status { position:absolute; left:8px; bottom:30px; z-index:55;
