@@ -18,6 +18,7 @@
 
 import { svgEl, toolHelp } from "./bEpicViewer_tools.js";
 import { api } from "../../scripts/api.js";
+import { prefColor, PREF } from "./bEpicViewer_settings.js";
 
 const ANNOT_COLORS = ["#ff3b30", "#ff9500", "#ffcc00", "#34c759",
                       "#00c7be", "#0a84ff", "#ffffff", "#000000"];
@@ -49,6 +50,9 @@ export const AnnotateMixin = {
             size: 6, textSize: 42, userSized: false, includeImage: true,
             draft: null, textInput: null, textAnchor: null, textTabKey: null,
         };
+        // Settings → bEpic Viewer.
+        this._annot.color = prefColor(PREF.annotColor);
+        this._annotApplySizePrefs();
         this._annotInjectStyles();
     },
 

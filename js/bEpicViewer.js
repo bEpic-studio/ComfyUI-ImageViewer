@@ -34,6 +34,7 @@ import {
 } from "./bEpicViewer_nodeTools.js";
 import { viewerCommands, viewerKeybindings, VIEWER_TARGET_ID } from "./bEpicViewer_keymap.js";
 import { parseScene } from "./bEpicViewer_scene3d.js";
+import { viewerSettings, applyStartupPrefs, PrefsMixin, pref, setPref, PREF } from "./bEpicViewer_settings.js";
 
 let globalViewerPanel = null;
 const watchedNodeIds  = new Set();
@@ -328,10 +329,16 @@ class ViewerPanel extends HTMLElement {
 
         if (!parsed || typeof parsed !== 'object') return false;
 
-        // A preference, not content: restored even when no tab came back.
+        // The limit is a setting now (Settings → bEpic Viewer). A limit this
+        // browser kept from before is taken over once, while the setting is
+        // still at its default.
         if (parsed.historyLimit != null) {
-            this.historyLimit = clampHistoryLimit(parsed.historyLimit);
-            this._syncHistoryLimitInput();
+            const kept = clampHistoryLimit(parsed.historyLimit);
+            if (kept !== HISTORY_LIMIT_DEFAULT && Number(pref(PREF.historyLimit)) === HISTORY_LIMIT_DEFAULT) {
+                this.historyLimit = kept;
+                setPref(PREF.historyLimit, kept);
+                this._syncHistoryLimitInput();
+            }
         }
         if (typeof parsed.historyTagFilter === 'string') this.historyTagFilter = parsed.historyTagFilter;
         if (parsed.historyTags && typeof parsed.historyTags === 'object') {
@@ -451,6 +458,7 @@ class ViewerPanel extends HTMLElement {
         window.addEventListener('keyup', (e) => this.handleKeyUp(e));
 
         this._cacheElements();
+        this._applyStartupViewerPrefs();   // Settings → bEpic Viewer
         this._initParamsPanel();
         this._initHistoryPanel();
         this._initToolbarButtons();
@@ -1215,6 +1223,7 @@ Object.assign(
     PrevizRenderMixin,
     PrevizUndoMixin,
     PrevizWorldMixin,
+    PrefsMixin,
 );
 
 if (!customElements.get("bepic-viewer-panel")) {
@@ -1274,6 +1283,8 @@ function _applyViewerOnlyMode(panel) {
 try {
 app.registerExtension({
     name: "bEpic.Viewer",
+    // Settings → bEpic Viewer: the defaults, and the folders the viewer may open.
+    settings: viewerSettings(() => globalViewerPanel),
     commands: [
         {
             id:    "bEpic.toggleViewer",
@@ -1315,6 +1326,7 @@ app.registerExtension({
     ],
 
     async setup() {
+        applyStartupPrefs();
         globalViewerPanel = document.createElement("bepic-viewer-panel");
         document.body.appendChild(globalViewerPanel);
         _setViewerPanelToggle(false, { syncDisplay: true });

@@ -1051,6 +1051,51 @@ try:
             return web.json_response({"stages": out, "dir": folder,
                                       "available": bool(usd_io and usd_io.available())})
 
+        async def _bepic_roots(request):
+            """The folders the viewer may open, for Settings → bEpic Viewer,
+            and whether this request may change them."""
+            editable, reason = path_access.may_edit(request)
+            out = path_access.describe()
+            out.update(editable=editable, reason=reason)
+            return web.json_response(out)
+
+        async def _bepic_roots_save(request):
+            """Replace the folders listed in bepic_viewer_roots.txt. The one
+            request that can widen what every other route will open, so it is
+            fenced by path_access.may_edit."""
+            editable, reason = path_access.may_edit(request)
+            if not editable:
+                return web.json_response({"error": reason}, status=403)
+            try:
+                body = await request.json()
+                entries = body.get("entries")
+                if not isinstance(entries, list):
+                    raise ValueError("'entries' must be a list of folder paths")
+                path_access.write_file_entries(entries)
+            except ValueError as e:
+                return web.json_response({"error": str(e)}, status=400)
+            except OSError as e:
+                return web.json_response(
+                    {"error": f"could not write {path_access.ROOTS_FILE}: {e}"}, status=500)
+            out = path_access.describe()
+            out.update(editable=True, reason="")
+            return web.json_response(out)
+
+        async def _bepic_roots_folders(request):
+            """Sub-folders of a path, for the settings page's folder picker.
+            Looks outside the allowed folders — that is its job — so it is
+            answered only where the list may be edited."""
+            editable, reason = path_access.may_edit(request)
+            if not editable:
+                return web.json_response({"error": reason}, status=403)
+            try:
+                body = await request.json()
+                return web.json_response(path_access.list_folders(str(body.get("path") or "")))
+            except FileNotFoundError as e:
+                return web.json_response({"error": f"not a folder: {e.args[0]}"}, status=404)
+            except (OSError, ValueError) as e:
+                return web.json_response({"error": str(e)}, status=400)
+
         # Routes that change something on the machine — writing a render,
         # deleting cache files — are POST only. A GET can be set off by a link
         # or an <img> on any page the user has open; a JSON POST from another
@@ -1101,6 +1146,12 @@ try:
         _safe_add("GET", "/api/bepic/viewer", _bepic_viewer_page)
         _safe_add("GET", "/imageviewer", _bepic_viewer_page)
         _safe_add("GET", "/api/imageviewer", _bepic_viewer_page)
+        _safe_add("GET", "/bepic/roots", _bepic_roots)
+        _safe_add("GET", "/api/bepic/roots", _bepic_roots)
+        _safe_add("POST", "/bepic/roots", _bepic_roots_save)
+        _safe_add("POST", "/api/bepic/roots", _bepic_roots_save)
+        _safe_add("POST", "/bepic/roots/folders", _bepic_roots_folders)
+        _safe_add("POST", "/api/bepic/roots/folders", _bepic_roots_folders)
         _safe_add("GET", "/bepic/health", _bepic_health)
         _safe_add("GET", "/api/bepic/health", _bepic_health)
 

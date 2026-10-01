@@ -87,6 +87,16 @@ export const RENDER_DEFAULTS = {
     aa: 2, grid: false, helpers: false, addNode: true,
 };
 
+// The render dialog's starting point for a shot that has never been rendered,
+// from Settings → bEpic Viewer. Only the look-and-output fields: range and
+// camera belong to the shot.
+const _RENDER_FACTORY = { ...RENDER_DEFAULTS };
+export function setRenderDefaults(patch = {}) {
+    Object.assign(RENDER_DEFAULTS, _RENDER_FACTORY);     // a bad value falls back to the factory's
+    const merged = renderSettings({ render: { ..._RENDER_FACTORY, ...patch } });
+    for (const k of ["format", "quality", "scale", "aa", "background", "color"]) RENDER_DEFAULTS[k] = merged[k];
+}
+
 /** The scene's render settings, every field present and sane. */
 export function renderSettings(scene) {
     const raw = (scene && scene.render && typeof scene.render === "object") ? scene.render : {};
@@ -122,6 +132,18 @@ export function offsetOf(item) {
 }
 export const DEFAULT_FPS = 24;
 export const DEFAULT_LENGTH = 120;
+
+// What a NEW shot and a new camera start with — the DEFAULT_* above stay what a
+// saved scene missing a field is read as. Set from Settings → bEpic Viewer
+// (setNewSceneDefaults); this module itself stays free of ComfyUI.
+const NEW_SCENE = { fps: DEFAULT_FPS, length: DEFAULT_LENGTH, resolution: DEFAULT_RESOLUTION.slice() };
+
+export function setNewSceneDefaults({ fps, length, resolution } = {}) {
+    NEW_SCENE.fps = Number(fps) > 0 ? Number(fps) : DEFAULT_FPS;
+    NEW_SCENE.length = Number(length) >= 1 ? Math.round(Number(length)) : DEFAULT_LENGTH;
+    NEW_SCENE.resolution = Array.isArray(resolution) && resolution.length === 2 && resolution.every((v) => v > 0)
+        ? resolution.map((v) => Math.round(v)) : DEFAULT_RESOLUTION.slice();
+}
 export const TRACKS = ["position", "rotation", "scale", "pivot", "fov"];
 
 // Blocking shapes the viewer can make on its own — no file, no loader. Each is
@@ -165,8 +187,8 @@ export function makeGroupItem(name) {
 export function makeScene(patch = {}) {
     return {
         version: SCENE_VERSION,
-        fps: DEFAULT_FPS,
-        length: DEFAULT_LENGTH,
+        fps: NEW_SCENE.fps,
+        length: NEW_SCENE.length,
         items: [],
         activeCamera: null,      // item id, or null for the free camera
         // Whether the length above was chosen rather than defaulted. A model's
@@ -258,7 +280,7 @@ export function makeCameraItem(name, patch = {}) {
         rotation: [0, 0, 0],
         scale: [1, 1, 1],
         fov: 35,
-        resolution: DEFAULT_RESOLUTION.slice(),
+        resolution: NEW_SCENE.resolution.slice(),
         pivot: [0, 0, 0],
         visible: true,
         tracks: {},

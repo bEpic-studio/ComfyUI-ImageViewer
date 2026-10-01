@@ -17,6 +17,7 @@
 //   • onto the ComfyUI graph → a path-based loader node (see mixinDnD part 2)
 //   • onto the viewport      → the file opens in a new viewer tab
 import { api } from "../../scripts/api.js";
+import { pref, prefKinds, setPref, PREF } from "./bEpicViewer_settings.js";
 
 // Containers a <video> will actually play. The rest are listed and can be
 // dragged and opened like anything else — only the in-panel preview falls back
@@ -70,14 +71,22 @@ export const BrowserMixin = {
         this._browserSel    = new Set();   // indices into _browserEntries
         this._browserAnchor = null;        // for shift-range selection
         this._browserLoaded = false;
-        this._browserDir    = this._browserDir || this._savedBrowserDir();
+        // A start folder set in Settings → bEpic Viewer wins over the one the
+        // last session was left in.
+        this._browserDir    = this._browserDir || String(pref(PREF.browserStart) || "").trim()
+                              || this._savedBrowserDir();
         // The filter belongs to the browser, not to the folder: looking for
         // *.exr, walking into the next folder and being shown everything again
         // is not what a filter is for.
         const saved = this._savedBrowserFilter();
         this._browserFilter = saved.text;
-        this._browserKinds  = saved.kinds;
-        this._browserFold   = saved.fold;
+        // Kinds and folding are settings (Settings → bEpic Viewer) the controls
+        // write back to. What this browser kept from before is taken over once,
+        // while the setting is still at its default.
+        if (saved.kinds && !prefKinds()) setPref(PREF.browserKinds, saved.kinds);
+        if (saved.fold && !pref(PREF.browserFold)) setPref(PREF.browserFold, true);
+        this._browserKinds  = prefKinds();
+        this._browserFold   = !!pref(PREF.browserFold);
         if (this.browserFilterIn) this.browserFilterIn.value = this._browserFilter;
         this._syncBrowserFoldOption();
         if (this.browserKindSel) this.browserKindSel.value = this._browserKinds;
@@ -139,6 +148,7 @@ export const BrowserMixin = {
 
     toggleBrowserFold(on = !this._browserFold) {
         this._browserFold = !!on;
+        setPref(PREF.browserFold, this._browserFold);
         this._syncBrowserFoldOption();
         if (this.queuePersistViewerState) this.queuePersistViewerState();
         this._browserBuildEntries();
@@ -208,6 +218,7 @@ export const BrowserMixin = {
     _browserFilterChanged({ now = false } = {}) {
         this._browserFilter = this.browserFilterIn ? this.browserFilterIn.value.trim() : "";
         this._browserKinds = this.browserKindSel ? this.browserKindSel.value : "";
+        setPref(PREF.browserKinds, this._browserKinds || "all");
         if (this.queuePersistViewerState) this.queuePersistViewerState();
         const win = this._viewerWindow();
         if (this._browserFilterTimer) win.clearTimeout(this._browserFilterTimer);

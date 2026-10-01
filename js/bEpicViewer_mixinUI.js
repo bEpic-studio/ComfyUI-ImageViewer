@@ -740,6 +740,10 @@ export const UIMixin = {
             this.updateCompareVisuals();
             this._scheduleCompareSync();
             this._startCompareTicker();
+            // Opened as a vertical wipe above; Settings → bEpic Viewer may ask
+            // for another layout.
+            const mode = this._prefCompareMode ? this._prefCompareMode() : "vertical";
+            if (mode !== "vertical") this.setSliderMode(mode);
         } else {
             this.rotateBtn.style.display          = "none";
             this.imgCompare.style.display         = "none";

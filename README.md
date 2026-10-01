@@ -37,6 +37,7 @@ An advanced image viewer panel for [ComfyUI](https://github.com/comfyanonymous/C
 
 - **dockable panels** — history, file browser, parameters, and the 3D panels — on either side of the picture or along the bottom, stacked and resized with splitters, arrangement remembered
 - a **file browser** over ComfyUI's folders (and any you allow): every file listed, wildcard and kind filters, previews
+- **Settings → bEpic Viewer**: the folders the viewer may open (add, browse, remove — no restart), and its defaults for playback, compare, history, the file browser, annotation, 3D and previz
 - every function has a **hotkey command** you can rebind in *Settings → Keybinding*
 
 ---

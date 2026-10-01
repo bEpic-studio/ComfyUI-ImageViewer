@@ -15,6 +15,7 @@
 // Rendering is on demand. A still model costs nothing once drawn; the loop only
 // runs while the camera is settling or an animation plays.
 import { api } from "../../scripts/api.js";
+import { pref, PREF } from "./bEpicViewer_settings.js";
 import { app } from "../../scripts/app.js";
 import { evaluate, cameraResolution, offsetOf, planeSettings } from "./bEpicViewer_scene3d.js";
 import { WorldViewMixin } from "./bEpicViewer_world3d.js";
@@ -120,8 +121,12 @@ export class Model3DView {
         this.root = null;
         this.libs = null;
         this.stats = null;
-        this.materialMode = "original";
-        this.showGrid = !!setting("Comfy.Load3D.ShowGrid", true);
+        // Settings → bEpic Viewer; the grid can follow ComfyUI's own 3D setting.
+        this.materialMode = MATERIAL_MODES.some(([v]) => v === pref(PREF.material3d))
+            ? pref(PREF.material3d) : "original";
+        const grid = pref(PREF.grid3d);
+        this.showGrid = grid === "on" ? true : grid === "off" ? false
+            : !!setting("Comfy.Load3D.ShowGrid", true);
         this.exposure = 1;
         this.channelFilter = "";
         this._loadId = 0;

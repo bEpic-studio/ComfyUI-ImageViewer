@@ -9,6 +9,7 @@
 // Shift keeps compare because that is the older and more valuable gesture; the
 // selection is the one that had to find another modifier.
 import { api } from "../../scripts/api.js";
+import { setPref, PREF } from "./bEpicViewer_settings.js";
 
 // Snapshots kept per tab, unless the user sets another number at the foot of
 // the history panel. With clip caching on, this is also how many videos can be
@@ -65,6 +66,7 @@ export const HistoryMixin = {
         }
         this.historyLimit = clampHistoryLimit(value);
         this._syncHistoryLimitInput();
+        setPref(PREF.historyLimit, this.historyLimit);
         for (const key of Object.keys(this.history || {})) {
             const stack = this.history[key];
             if (!Array.isArray(stack) || stack.length <= this.historyLimit) continue;
