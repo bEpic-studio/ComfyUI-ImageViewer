@@ -131,7 +131,8 @@ function defs() {
         {
             id: PREF.folders, category: sec("Folders", "Allowed"),
             name: "Folders the viewer may open",
-            tooltip: "The file browser and every viewer route are confined to these folders. " +
+            tooltip: "The file browser and every viewer route are confined to these folders, " +
+                     "each with everything inside it, subfolders included. " +
                      "Kept on the server in bepic_viewer_roots.txt, not in your settings.",
             type: (name, setter, value) => renderFolderEditor(),
             defaultValue: "", sortOrder: 1000,
@@ -515,7 +516,7 @@ function renderFolderEditor() {
                                             pickSlot.append(picker);
                                         } }, "Browse…");
         body.append(
-            h("div", { className: "bepic-roots-h" }, "Added folders"),
+            h("div", { className: "bepic-roots-h" }, "Added folders — each with all its subfolders"),
             state.file_entries.length
                 ? h("div", { className: "bepic-roots-list" }, state.file_entries.map((e, i) => row(e.path, {
                     status: e.status, label: e.entry !== e.path ? e.entry : "",
@@ -540,7 +541,8 @@ function renderFolderEditor() {
                 row(e.path, { status: e.status, fixed: true, label: e.label }))),
             h("div", { className: "bepic-roots-note" },
               state.editable
-                  ? `Saved on the ComfyUI machine in ${state.file}. Takes effect at once; no restart.`
+                  ? `A folder allows everything inside it, at any depth. Saved on the ComfyUI machine in ` +
+                    `${state.file}. Takes effect at once; no restart.`
                   : state.reason),
         );
     }
