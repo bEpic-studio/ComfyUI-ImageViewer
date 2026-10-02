@@ -19,6 +19,8 @@ export const UIMixin = {
         if (this.exposureValue) this.exposureValue.textContent = `${this.exposure.toFixed(1)} EV`;
 
         this.applyExposure();
+        // A converted picture takes its exposure on the server, in linear light.
+        this.queueExposureReload();
     },
 
     resetExposure() {
@@ -33,18 +35,22 @@ export const UIMixin = {
         this.applyExposure();
     },
 
+    // The filter makes up the stops the picture on screen does not already carry
+    // (`_bepicEv`, set when a frame loads): all of them for a picture shown as
+    // it is, none once a converted frame has arrived at the slider's exposure.
     applyExposure() {
-        const factor = Math.pow(2, Number.isFinite(this.exposure) ? this.exposure : 0);
+        const exposure = Number.isFinite(this.exposure) ? this.exposure : 0;
         let channelFilter = '';
         if (this.channelView === 'red') channelFilter = 'url(#bepic-channel-red)';
         else if (this.channelView === 'green') channelFilter = 'url(#bepic-channel-green)';
         else if (this.channelView === 'blue') channelFilter = 'url(#bepic-channel-blue)';
 
-        const exposureFilter = `brightness(${factor.toFixed(3)})`;
-        const filter = channelFilter ? `${channelFilter} ${exposureFilter}` : exposureFilter;
-        if (this.imgBase) this.imgBase.style.filter = filter;
-        if (this.imgCompare) this.imgCompare.style.filter = filter;
-        if (this.videoBase) this.videoBase.style.filter = filter;
+        for (const el of [this.imgBase, this.imgCompare, this.videoBase]) {
+            if (!el) continue;
+            const factor = Math.pow(2, exposure - (Number(el._bepicEv) || 0));
+            const exposureFilter = `brightness(${factor.toFixed(3)})`;
+            el.style.filter = channelFilter ? `${channelFilter} ${exposureFilter}` : exposureFilter;
+        }
         if (this._applyModelLook) this._applyModelLook();
     },
 

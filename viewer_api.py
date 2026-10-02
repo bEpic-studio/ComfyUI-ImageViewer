@@ -120,7 +120,7 @@ def _frame_arg(request):
         return 0
 
 
-def _file_response(path, prim=None, frame=0, cs=None):
+def _file_response(path, prim=None, frame=0, cs=None, ev=None):
     """Serve an image/video file, swapping in a browser-renderable PNG proxy for
     formats an <img> can't decode (exr / tiff / dpx / ...).
 
@@ -131,14 +131,15 @@ def _file_response(path, prim=None, frame=0, cs=None):
     it used to append, which was defeating its own frame-caching.
 
     `cs` is the input colourspace picked in the viewer: the picture is converted
-    from it to sRGB instead of getting the proxy's fixed treatment.
+    from it to sRGB instead of getting the proxy's fixed treatment. `ev` is the
+    viewer's exposure, applied in linear light before that conversion.
     """
     path = _usd_display_path(path, prim, frame)
     if media_resolve is not None:
         proxy, done = None, False
         if cs:
             try:
-                proxy, done = media_resolve.proxy_for_colorspace(path, cs), True
+                proxy, done = media_resolve.proxy_for_colorspace(path, cs, ev), True
             except Exception as e:
                 print(f"[bEpicViewer] colour transform failed for {path}: {e}")
         if not done:
@@ -299,11 +300,11 @@ try:
             except Exception as e:
                 print(f"[bEpicViewer] route register failed {method} {path}: {e}")
 
-        async def _serve(path, prim=None, frame=0, cs=None):
+        async def _serve(path, prim=None, frame=0, cs=None, ev=None):
             """_file_response off the event loop: decoding and converting a
             frame takes long enough to hold up every other request."""
             return await asyncio.get_running_loop().run_in_executor(
-                None, _file_response, path, prim, frame, cs)
+                None, _file_response, path, prim, frame, cs, ev)
 
         async def _bepic_colorspaces(request):
             """The input colourspaces the viewer's selector offers, which of
@@ -331,7 +332,7 @@ try:
             if not os.path.exists(cand):
                 return web.Response(status=404, text="file not found")
 
-            return await _serve(cand, cs=params.get("cs"))
+            return await _serve(cand, cs=params.get("cs"), ev=params.get("ev"))
 
         async def _bepic_probe_paths(request):
             """Report which of the given paths this server can no longer serve.
@@ -559,7 +560,8 @@ try:
             # `prim` narrows a USD stage (or an Alembic cache) to one subtree —
             # how a layout arrives as separate items the viewer can place; a
             # cache also takes `frame`, since it holds geometry per frame.
-            return await _serve(path, params.get("prim"), _frame_arg(request), params.get("cs"))
+            return await _serve(path, params.get("prim"), _frame_arg(request),
+                                params.get("cs"), params.get("ev"))
 
         async def _bepic_thumb(request):
             """Serve a small cached stand-in for an image, for the thumbnail strips.

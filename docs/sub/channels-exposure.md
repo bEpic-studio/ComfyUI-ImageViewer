@@ -49,6 +49,8 @@ The menu at the right end of the exposure bar says which colourspace the picture
 - The two are remembered separately, in this browser. The menu shows whichever applies to the picture that is up.
 - It works on any still picture the server can read, a PNG included. It is greyed out for videos, 3D tabs and files dropped straight from the desktop.
 
-Exposure and the channel view are applied after the conversion, on the sRGB picture.
+**Exposure is applied before the conversion**, to the light: the picture is taken to the config's working linear space, multiplied there, and only then converted to sRGB. So a few stops down brings back highlights the display transform clips, and a log picture is exposed as light, not as code values. While you drag, the picture follows at once with an approximation; the properly exposed frame replaces it a moment after you stop.
+
+A picture shown *as is* has no linear light to do that in: there the exposure is a brightness on the picture you see, as it always was. The channel view is applied last in both cases.
 
 Without PyOpenColorIO the menu offers two entries, sRGB and Linear.

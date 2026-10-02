@@ -109,6 +109,33 @@ export const ColorMixin = {
         return cs;
     },
 
+    /** The exposure a frame's URL carries as `ev`, "" for none.
+     *
+     *  A picture the server converts gets its exposure there, in linear light
+     *  and before the conversion — the only place a stop down can bring back a
+     *  highlight the display transform clips. One shown as it is has no linear
+     *  light to do that in, and keeps the brightness filter. */
+    exposureParam(imgObj) {
+        const cs = this.colorParam(imgObj);
+        if (!cs || cs === this._colorInfo.target) return "";
+        const ev = Math.round((Number(this.exposure) || 0) * 10) / 10;
+        return ev ? ev.toFixed(1) : "";
+    },
+
+    /** Exposure moved: ask for the frame at the new exposure once it settles.
+     *  Until that arrives applyExposure covers the difference with a filter. */
+    queueExposureReload() {
+        const win = (this.container && this.container.ownerDocument.defaultView) || window;
+        if (this._exposureTimer) win.clearTimeout(this._exposureTimer);
+        this._exposureTimer = win.setTimeout(() => {
+            this._exposureTimer = null;
+            const o = this._colorFrame;
+            if (!o || !this._colorInfo) return;
+            const cs = this.colorParam(o);
+            if (cs && cs !== this._colorInfo.target) this.refreshView();
+        }, 140);
+    },
+
     /** Point the selector at the frame that is up. */
     colorShow(imgObj) {
         this._colorFrame = imgObj || null;

@@ -271,10 +271,24 @@ def _to_u8(arr):
     return arr.astype("uint8")
 
 
-def proxy_for_colorspace(path, colorspace):
+def _ev(value):
+    """An exposure in stops off a query string: a tenth of a stop at a time (the
+    slider's step — and one cache entry each), within what the slider reaches
+    and a little more."""
+    try:
+        ev = round(float(value), 1)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(-8.0, min(8.0, ev)) if ev == ev else 0.0
+
+
+def proxy_for_colorspace(path, colorspace, ev=0.0):
     """`path` converted from `colorspace` to sRGB, as a cached file an <img>
     shows — or None when the file can be served as it is (not a still picture, or
     already sRGB in a format an <img> shows). Raises when it cannot be read.
+
+    `ev` is the viewer's exposure, applied in linear light before the conversion
+    (color_io.to_srgb); a picture shown as it is has none.
 
     An opaque picture is cached as a JPEG (quality 95, no chroma subsampling), one
     with alpha as a PNG. The encode is most of what a frame costs: on a grainy 4K
@@ -292,14 +306,17 @@ def proxy_for_colorspace(path, colorspace):
     import threading
     import numpy as np
     from PIL import Image
+    ev = 0.0 if identity else _ev(ev)
     key = "srgb" if identity else hashlib.sha1(colorspace.encode("utf-8", "replace")).hexdigest()[:10]
+    if ev:
+        key += "e%d" % round(ev * 10)
     base = os.path.splitext(_cache_path(path, "cs" + key))[0]
     for cached in (base + ".jpg", base + ".png"):
         if _cached(cached, path):
             return cached
 
     rgb, alpha = _read_float(path)
-    color_io.to_srgb(rgb, colorspace)
+    color_io.to_srgb(rgb, colorspace, ev)
     u8 = _to_u8(rgb)
     # Written aside and moved in: two requests for one frame can be here at once.
     tmp = f"{base}.{threading.get_ident()}.tmp"

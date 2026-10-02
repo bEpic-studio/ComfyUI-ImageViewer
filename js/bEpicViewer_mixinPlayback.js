@@ -50,6 +50,9 @@ export const PlaybackMixin = {
             // from it to sRGB. Part of the URL, so each choice caches apart.
             const cs = (opts && opts.noColor) || imgObj.raw ? '' : this.colorParam(imgObj);
             if (cs) url += `&cs=${encodeURIComponent(cs)}`;
+            // Exposure goes with it: applied in linear light, before the conversion.
+            const ev = cs ? this.exposureParam(imgObj) : '';
+            if (ev) url += `&ev=${ev}`;
             return api.apiURL(url);
         }
         let params = `?filename=${encodeURIComponent(imgObj.filename || '')}`;
@@ -683,11 +686,21 @@ export const PlaybackMixin = {
         // doesn't serve. Hand it to the history prune, which verifies with the
         // server before dropping anything, so a transient failure costs nothing.
         imgEl.onerror = () => { if (this.noteMediaLoadFailed) this.noteMediaLoadFailed(); };
+        // The exposure already in the picture (`ev` in its URL): applyExposure
+        // makes up only the difference to the slider with a filter, so the
+        // picture on screen follows the slider while the real frame is on its way.
+        const shown = () => {
+            const m = /[?&]ev=(-?[\d.]+)/.exec(url);
+            imgEl._bepicEv = m ? parseFloat(m[1]) : 0;
+            this.applyExposure();
+        };
         imgEl.onload = () => {
             this.noteFrameCached(url);
+            shown();
             if (onLoadCallback) onLoadCallback();
         };
         if (imgEl.src !== url) { imgEl.src = url; return; }
+        if (imgEl.complete && imgEl.naturalWidth) shown();
         // Unchanged src means no load event fires, so run the callback anyway.
         // The layer is already decoded, so whatever the caller derives from its
         // size (aspect match, wipe seam, side-by-side layout) is computable right

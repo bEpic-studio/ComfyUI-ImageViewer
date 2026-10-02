@@ -40,7 +40,7 @@ _COMMON = ("ACES - ACEScg", "ACEScg", "Utility - Linear - sRGB", "Linear Rec.709
 
 _lock = threading.Lock()
 _state = None            # what _load() found, built once
-_processors = {}         # input colourspace -> CPUProcessor
+_processors = {}         # (from, to) -> CPUProcessor; to is None for "to sRGB"
 _pool = None             # strips of one frame, converted side by side
 
 
@@ -151,20 +151,25 @@ def is_identity(colorspace):
     return (not colorspace) or colorspace == st["target"] or colorspace not in st["names"]
 
 
-def _processor(colorspace):
+def _processor(colorspace, to=None):
+    """The CPU processor from *colorspace* to another colourspace, or — *to*
+    left out — to the viewer's sRGB."""
     st = _load()
+    key = (colorspace, to)
     with _lock:
-        if colorspace not in _processors:
+        if key not in _processors:
             cfg = st["config"]
-            if st["view"]:
+            if to is not None:
+                proc = cfg.getProcessor(colorspace, to)
+            elif st["view"]:
                 proc = cfg.getProcessor(
                     ocio.DisplayViewTransform(src=colorspace, display=st["view"][0],
                                               view=st["view"][1]),
                     ocio.TRANSFORM_DIR_FORWARD)
             else:
                 proc = cfg.getProcessor(colorspace, st["target"])
-            _processors[colorspace] = proc.getDefaultCPUProcessor()
-        return _processors[colorspace]
+            _processors[key] = proc.getDefaultCPUProcessor()
+        return _processors[key]
 
 
 def _apply(cpu, rgb):
@@ -183,17 +188,34 @@ def _apply(cpu, rgb):
     list(_pool.map(lambda ab: cpu.applyRGB(rgb[ab[0]:ab[1]]), zip(edges[:-1], edges[1:])))
 
 
-def to_srgb(rgb, colorspace):
+def to_srgb(rgb, colorspace, ev=0.0):
     """Convert *rgb* — float32, [H,W,3], contiguous — from *colorspace* to sRGB,
-    in place. Returns it."""
+    in place. Returns it.
+
+    *ev* is the viewer's exposure, in stops, and it is applied to the light, not
+    to the picture on screen: the values are taken to the config's working
+    linear space, multiplied there, and only then converted for display. That is
+    what lets a stop down bring back a highlight the display transform would
+    have clipped — which no adjustment of the converted picture can do.
+    """
     if is_identity(colorspace):
         return rgb
     st = _load()
+    gain = float(2.0 ** ev) if ev else 1.0
     if st["config"] is None:
         # No OpenColorIO: the one transform there is, the sRGB curve.
+        if gain != 1.0:
+            rgb *= gain
         np.clip(rgb, 0.0, None, out=rgb)
         rgb[...] = np.where(rgb <= 0.0031308, rgb * 12.92,
                             1.055 * np.power(rgb, 1.0 / 2.4) - 0.055)
         return rgb
-    _apply(_processor(colorspace), rgb)
+    if gain == 1.0:
+        _apply(_processor(colorspace), rgb)
+        return rgb
+    linear = st["linear"]
+    if colorspace != linear:
+        _apply(_processor(colorspace, linear), rgb)
+    rgb *= gain
+    _apply(_processor(linear), rgb)
     return rgb
