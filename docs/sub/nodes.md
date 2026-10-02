@@ -24,11 +24,34 @@ With a still-image format (png, exr, jpg, tiff, …) the node also offers **is_s
 | `first_frame_number` | The number the first frame gets (default 1001) |
 | `padding` | How many digits that number is written with (default 4, max 9) |
 
-Frames are then named `prefix.1001.png`, `prefix.1002.png`, … instead of ComfyUI's `prefix_00001_.png`, which is what the rest of a VFX pipeline expects. A `filename_prefix` of `shots/shotA` writes `output/shots/shotA.1001.png`.
+Frames are then named `prefix_v001.1001.png`, `prefix_v001.1002.png`, … instead of ComfyUI's `prefix_00001_.png`, which is what the rest of a VFX pipeline expects. A `filename_prefix` of `shots/shotA` writes `output/shots/shotA_v001.1001.png`.
 
-Those names don't depend on what is already in the folder, so re-running the workflow **overwrites the frames it wrote last time** rather than saving a second copy beside them. The counter-based default never overwrites anything.
+Frame numbers are the same on every run, so each run is saved as a **version** of its own and never overwrites an earlier one:
+
+- A prefix with a version in it (`_v` and digits, e.g. `shotA_comp_v003`) starts at that version and, once it exists, moves to one past the latest on disk: `v003`, then `v004`, … The digit count and whatever follows the version (`shotA_v003_beauty`) are kept.
+- A prefix without one gets `_v001` added, then `_v002`, …
+- The version can sit in a folder as well: `shots/shotA_v001/shotA_v001` writes a new `shotA_v002` folder with `shotA_v002.1001.png` in it.
+
+Counter-based names (is_sequence off) and videos are left as they are; the counter already keeps them apart.
 
 The toggle is hidden for video formats, where it means nothing.
+
+### Format Settings
+
+Below the sequence fields the node shows the settings the chosen format has, and only those. `auto` is the format's usual choice.
+
+| Format | `bit_depth` | `compression` | Other |
+|---|---|---|---|
+| png | 8 (auto), 16 | | `compress_level` 0–9 (default 6; lossless either way) |
+| exr | 16 float (auto), 32 float | none, rle, zips, zip (auto), piz, pxr24, b44, b44a, dwaa, dwab | |
+| tiff | 8, 16 (auto), 32 float | none, lzw, zip (auto), packbits | |
+| dpx | 8, 10, 12, 16 (auto) | | |
+| tga | | none (auto), rle | |
+| jpg | | | `quality` 1–100 |
+| webp | | lossless | `quality` 1–100 |
+| mp4, mov, webm | | | `quality` 1–100 |
+
+`quality` defaults to 90. A setting keeps its value while it is hidden, and is ignored by a format that has no use for it. These need OpenImageIO; without it only `quality` and `compress_level` apply.
 
 Saved PNGs carry the ComfyUI workflow in their text chunks, exactly as SaveImage writes it, so dropping one back onto the canvas rebuilds the graph that made it. A video container can't hold that, so video outputs get it in a same-named companion PNG — which doubles as the clip's thumbnail in the viewer's history. Starting ComfyUI with `--disable-metadata` switches this off, the same as it does for the standard save nodes.
 

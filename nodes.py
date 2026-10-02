@@ -408,6 +408,24 @@ def _history_ui(paths, key="images", animated=False):
     return ui
 
 
+def _format_option_inputs():
+    """bit_depth / compression / quality / compress_level for bEpicSendToViewer,
+    from file_writer's per-format tables. Nothing when the writer is missing."""
+    fw = file_writer
+    if fw is None or not hasattr(fw, "BIT_DEPTHS"):
+        return {}
+    return {
+        "bit_depth": (fw.BIT_DEPTH_MENU, {"default": fw.AUTO,
+                                          "bepic_formats": fw.BIT_DEPTHS}),
+        "compression": (fw.COMPRESSION_MENU, {"default": fw.AUTO,
+                                              "bepic_formats": fw.COMPRESSIONS}),
+        "quality": ("INT", {"default": fw.QUALITY_DEFAULT, "min": 1, "max": 100, "step": 1,
+                            "bepic_formats": fw.QUALITY_FORMATS}),
+        "compress_level": ("INT", {"default": fw.COMPRESS_LEVEL_DEFAULT, "min": 0, "max": 9,
+                                   "step": 1, "bepic_formats": fw.COMPRESS_LEVEL_FORMATS}),
+    }
+
+
 class bEpicSendToViewer:
     def __init__(self):
         self.output_dir = folder_paths.get_temp_directory()
@@ -446,6 +464,11 @@ class bEpicSendToViewer:
                 "padding": ("INT", {"default": 4, "min": 1, "max": 9, "step": 1,
                                     "bepic_sequence_only": True}),
             },
+            # Per-format settings. Optional, so an API prompt written before
+            # they existed still validates; each carries the formats it applies
+            # to (and, for a menu, that format's entries), which is what the JS
+            # shows it by. "auto" is what saving did before these existed.
+            "optional": _format_option_inputs(),
             "hidden": {
                 "unique_id": "UNIQUE_ID",
                 "prompt": "PROMPT",
@@ -465,7 +488,10 @@ class bEpicSendToViewer:
     def send(self, input, tab_name="", save_to_output=False,
              file_format="png", fps=24.0, filename_prefix="bEpic",
              is_sequence=False, first_frame_number=1001, padding=4,
+             bit_depth="auto", compression="auto", quality=None, compress_level=None,
              unique_id=None, prompt=None, extra_pnginfo=None):
+        options = {"bit_depth": bit_depth, "compression": compression,
+                   "quality": quality, "compress_level": compress_level}
         safe_label = tab_name.replace(" ", "_") if tab_name else "send"
 
         # A MESH or 3D file opens as a 3D tab, and "save to output" writes it
@@ -495,7 +521,7 @@ class bEpicSendToViewer:
             try:
                 saved, tab_frames = file_writer.write_video_input(
                     input, save_to_output, filename_prefix, file_format, fps,
-                    prompt, extra_pnginfo)
+                    prompt, extra_pnginfo, options=options)
             except Exception as e:
                 print(f"\033[91m[bEpicSendToViewer] video input failed: {e}\033[0m")
                 tab_frames = None
@@ -505,7 +531,7 @@ class bEpicSendToViewer:
                     input, filename_prefix, file_format, fps,
                     prompt, extra_pnginfo,
                     sequence=is_sequence, first_frame=first_frame_number,
-                    padding=padding)
+                    padding=padding, options=options)
             except Exception as e:
                 print(f"\033[91m[bEpicSendToViewer] save to output failed: {e}\033[0m")
                 tab_frames = None

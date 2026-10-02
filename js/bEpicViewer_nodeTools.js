@@ -53,8 +53,12 @@ export const FORMAT_WIDGET = "file_format";
 export const FPS_WIDGET    = "fps";
 export const SEQUENCE_TOGGLE = "is_sequence";
 export const SEQUENCE_WIDGETS = ["first_frame_number", "padding"];
+// Per-format settings: each is shown only for the formats its definition lists
+// (`bepic_formats`), and a menu is narrowed to that format's entries.
+export const FORMAT_OPTION_WIDGETS = ["bit_depth", "compression", "quality", "compress_level"];
 export const OUTPUT_CFG_WIDGETS = [FORMAT_WIDGET, FPS_WIDGET, "filename_prefix",
-                                   SEQUENCE_TOGGLE, ...SEQUENCE_WIDGETS];
+                                   SEQUENCE_TOGGLE, ...SEQUENCE_WIDGETS,
+                                   ...FORMAT_OPTION_WIDGETS];
 
 export function isViewerSourceNode(node) {
     return !!node && SOURCE_NODES.includes(node.type);
@@ -88,6 +92,31 @@ function modelFormatsFromDef(nodeData) {
     const spec = nodeData && nodeData.input && nodeData.input.required && nodeData.input.required.fps;
     const list = Array.isArray(spec) && spec[1] ? spec[1].bepic_model_formats : null;
     return Array.isArray(list) ? list : [];
+}
+
+/** { widget: bepic_formats } for the per-format settings. A menu's is
+ *  { format: [entries] }, a number's is [formats]. Read off the definition, for
+ *  the reason given above videoFormatsFromDef. */
+function formatOptionsFromDef(nodeData) {
+    const opt = (nodeData && nodeData.input && nodeData.input.optional) || {};
+    const out = {};
+    for (const name of FORMAT_OPTION_WIDGETS) {
+        const spec = opt[name];
+        const formats = Array.isArray(spec) && spec[1] ? spec[1].bepic_formats : null;
+        if (formats && typeof formats === "object") out[name] = formats;
+    }
+    return out;
+}
+
+/** What a per-format setting offers for `format`: a menu's entries, `true` for
+ *  a number that applies, `null` when the format has no use for it. */
+function formatOptionFor(node, name, format) {
+    const formats = (node && node._bepicFormatOptions || {})[name];
+    const ext = normExt(format);
+    if (!formats || !ext) return null;
+    if (Array.isArray(formats)) return formats.some(v => normExt(v) === ext) ? true : null;
+    const key = Object.keys(formats).find(k => normExt(k) === ext);
+    return key ? formats[key] : null;
 }
 
 export function isModelFormat(node, format) {
@@ -225,6 +254,7 @@ function resyncOnChange(node, widgetName) {
 export function registerSendNode(nodeType, nodeData) {
     const videoFormats = videoFormatsFromDef(nodeData);
     const modelFormats = modelFormatsFromDef(nodeData);
+    const formatOptions = formatOptionsFromDef(nodeData);
     const outCount = ((nodeData && nodeData.output) || []).length;
 
     const onNodeCreated = nodeType.prototype.onNodeCreated;
@@ -232,6 +262,7 @@ export function registerSendNode(nodeType, nodeData) {
         const r = onNodeCreated?.apply(this, arguments);
         this._bepicVideoFormats = videoFormats;
         this._bepicModelFormats = modelFormats;
+        this._bepicFormatOptions = formatOptions;
         // The node reports its files to ComfyUI (that is how they reach history
         // and the asset list), and that report is also what the frontend draws
         // an inline preview from. The picture belongs in the viewer, so the
@@ -250,6 +281,8 @@ export function registerSendNode(nodeType, nodeData) {
         return r;
     };
 
+    // The per-format settings (bit depth, compression, quality …) follow the
+    // format too: see FORMAT_OPTION_WIDGETS.
     // Show file_format / fps / filename_prefix only while save_to_output is on,
     // then reflow the node to the new widget layout. Two of them are narrower
     // still, and they are opposites: fps sets the encoder's frame rate, so a
@@ -269,6 +302,19 @@ export function registerSendNode(nodeType, nodeData) {
             if (name === FPS_WIDGET) show = saving && isVideo;
             else if (name === SEQUENCE_TOGGLE) show = saving && !isVideo && !isModel;
             else if (SEQUENCE_WIDGETS.includes(name)) show = saving && !isVideo && !isModel && seqOn;
+            else if (FORMAT_OPTION_WIDGETS.includes(name)) {
+                const w = getToolWidget(this, name);
+                const offer = formatOptionFor(this, name, fmt && fmt.value);
+                show = saving && !isModel && !!offer;
+                // A menu holds every format's entries; while it is up it lists
+                // this format's only, and a value left over from another format
+                // goes back to "auto". Hidden, it is left alone — the backend
+                // ignores a value the format has no use for.
+                if (show && w && Array.isArray(offer) && w.options) {
+                    w.options.values = ["auto", ...offer];
+                    if (!w.options.values.includes(w.value)) w.value = "auto";
+                }
+            }
             setWidgetVisible(this, getToolWidget(this, name), show);
         }
         const sz = this.computeSize();
@@ -281,6 +327,7 @@ export function registerSendNode(nodeType, nodeData) {
         const r = onConfigure?.apply(this, arguments);
         this._bepicVideoFormats = videoFormats;
         this._bepicModelFormats = modelFormats;
+        this._bepicFormatOptions = formatOptions;
         // Workflows saved before the tools moved out carry roto_mask / SAM3
         // slots this node no longer has. Litegraph restores whatever was
         // serialized, so drop the extras rather than leave slots that can never

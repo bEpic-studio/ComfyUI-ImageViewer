@@ -15,6 +15,8 @@ actually requested.
 import json
 import os
 import random
+import re
+import time
 
 import numpy as np
 import torch
@@ -104,6 +106,61 @@ def _build_format_menu():
 FILE_FORMATS = _build_format_menu()
 
 
+# ── per-format options ───────────────────────────────────────────────────────
+# What each format can be told, and so what the node offers for it. "auto" (the
+# first entry of every menu) is what saving did before these existed. The node
+# carries these tables to its JS, which shows a widget only for a format listed
+# here and narrows a menu to that format's entries.
+
+AUTO = "auto"
+BIT_DEPTHS = {
+    "png": ["8", "16"],
+    "tiff": ["8", "16", "32 float"],
+    "exr": ["16 float", "32 float"],
+    "dpx": ["8", "10", "12", "16"],
+}
+COMPRESSIONS = {
+    "exr": ["none", "rle", "zips", "zip", "piz", "pxr24", "b44", "b44a", "dwaa", "dwab"],
+    "tiff": ["none", "lzw", "zip", "packbits"],
+    "tga": ["none", "rle"],
+    "webp": ["lossless"],
+}
+QUALITY_FORMATS = ["jpg", "webp"] + VIDEO_EXTS
+QUALITY_DEFAULT = 90
+COMPRESS_LEVEL_FORMATS = ["png"]
+COMPRESS_LEVEL_DEFAULT = 6
+
+
+def _menu(table):
+    """Every entry of a per-format table, once, behind "auto"."""
+    out = [AUTO]
+    for values in table.values():
+        out += [v for v in values if v not in out]
+    return out
+
+
+BIT_DEPTH_MENU = _menu(BIT_DEPTHS)
+COMPRESSION_MENU = _menu(COMPRESSIONS)
+
+
+def _option(options, key, table, ext):
+    """options[key] if *ext* takes that value, else None ("auto").
+
+    A hidden widget keeps the value it had for the last format, so "dwaa" can
+    arrive with a tiff: that is not an error, it is just not for this format."""
+    value = str((options or {}).get(key) or AUTO)
+    return value if value in table.get(ext, ()) else None
+
+
+def _int_option(options, key, formats, ext, lo, hi):
+    if ext not in formats:
+        return None
+    try:
+        return max(lo, min(hi, int((options or {}).get(key))))
+    except (TypeError, ValueError):
+        return None
+
+
 def is_video(file_format):
     return (file_format or "").lower().lstrip(".") in VIDEO_EXTS
 
@@ -177,10 +234,14 @@ def _pnginfo(prompt, extra_pnginfo):
     return meta
 
 
-def _oiio_type(oiio, ext):
-    """Pick a sensible bit depth per format (half for EXR/HDR, 16-bit for
-    dpx/tiff, else 8-bit)."""
+def _oiio_type(oiio, ext, depth=None):
+    """The pixel type for *ext*: the asked-for bit depth, or a sensible one per
+    format (half for EXR/HDR, 16-bit for dpx/tiff, else 8-bit). 10 and 12 bit
+    (dpx) are 16-bit data with oiio:BitsPerSample saying how much of it counts."""
     ext = ext.lower()
+    if depth:
+        return {"8": oiio.UINT8, "16 float": oiio.HALF,
+                "32 float": oiio.FLOAT}.get(depth, oiio.UINT16)
     if ext in ("exr", "hdr"):
         return oiio.HALF
     if ext in ("dpx", "tif", "tiff"):
@@ -188,14 +249,43 @@ def _oiio_type(oiio, ext):
     return oiio.UINT8
 
 
-def _write_image_oiio(frame, path, ext):
+def _oiio_attributes(ext, options, text=None):
+    """The ImageSpec attributes *options* come to for *ext* — {name: value}."""
+    attrs = {}
+    depth = _option(options, "bit_depth", BIT_DEPTHS, ext)
+    if depth in ("10", "12"):
+        attrs["oiio:BitsPerSample"] = int(depth)
+    comp = _option(options, "compression", COMPRESSIONS, ext)
+    quality = _int_option(options, "quality", QUALITY_FORMATS, ext, 1, 100)
+    if ext == "webp":
+        if comp == "lossless":
+            attrs["compression"] = f"lossless:{quality if quality is not None else 70}"
+        elif quality is not None:
+            attrs["Compression"] = f"webp:{quality}"
+    elif comp:
+        attrs["compression"] = comp
+    elif ext in ("jpg", "jpeg") and quality is not None:
+        attrs["Compression"] = f"jpeg:{quality}"
+    level = _int_option(options, "compress_level", COMPRESS_LEVEL_FORMATS, ext, 0, 9)
+    if level is not None:
+        attrs["png:compressionLevel"] = level
+    # OpenImageIO writes a PNG's string attributes as text chunks, which is where
+    # ComfyUI keeps the workflow.
+    attrs.update(text or {})
+    return attrs
+
+
+def _write_image_oiio(frame, path, ext, options=None, text=None):
     import OpenImageIO as oiio
     # A mask arrives as a zero-stride broadcast view from _to_frames; OIIO reads
     # the buffer directly, so it needs one that is really laid out in memory.
     # Per frame this is a few tens of MB, not the whole batch.
     frame = np.ascontiguousarray(frame, dtype=frame.dtype)
     h, w, nch = frame.shape
-    spec = oiio.ImageSpec(w, h, nch, _oiio_type(oiio, ext))   # 4ch auto-names RGBA
+    depth = _option(options, "bit_depth", BIT_DEPTHS, ext)
+    spec = oiio.ImageSpec(w, h, nch, _oiio_type(oiio, ext, depth))   # 4ch auto-names RGBA
+    for name, value in _oiio_attributes(ext, options, text).items():
+        spec.attribute(name, value)
     out = oiio.ImageOutput.create(path)
     if out is None:
         raise RuntimeError(f"no OpenImageIO writer for '{path}'")
@@ -208,7 +298,7 @@ def _write_image_oiio(frame, path, ext):
     out.close()
 
 
-def _write_image_pil(frame, path, ext, pnginfo=None):
+def _write_image_pil(frame, path, ext, pnginfo=None, options=None):
     from PIL import Image
     u8 = np.clip(frame * 255.0, 0, 255).astype(np.uint8)
     if ext in ("jpg", "jpeg") and u8.shape[-1] == 4:
@@ -217,10 +307,32 @@ def _write_image_pil(frame, path, ext, pnginfo=None):
     # Only PNG has anywhere to put it; every other encoder here would be handed
     # a keyword it has no use for.
     extra = {"pnginfo": pnginfo} if pnginfo is not None else {}
+    level = _int_option(options, "compress_level", COMPRESS_LEVEL_FORMATS, ext, 0, 9)
+    if level is not None:
+        extra["compress_level"] = level
+    quality = _int_option(options, "quality", QUALITY_FORMATS, ext, 1, 100)
+    if quality is not None and ext in ("jpg", "jpeg", "webp"):
+        extra["quality"] = quality
+        if ext == "webp" and _option(options, "compression", COMPRESSIONS, ext) == "lossless":
+            extra["lossless"] = True
     Image.fromarray(u8, mode).save(path, **extra)
 
 
-def _write_image(frame, path, ext, prompt=None, extra_pnginfo=None):
+def _workflow_text(prompt, extra_pnginfo):
+    """ComfyUI's workflow metadata as {key: json} — what _pnginfo writes, for a
+    writer that takes plain strings. Empty when there is none or it is off."""
+    if _metadata_disabled():
+        return {}
+    text = {}
+    if prompt is not None:
+        text["prompt"] = json.dumps(prompt)
+    if isinstance(extra_pnginfo, dict):
+        for key, value in extra_pnginfo.items():
+            text[str(key)] = json.dumps(value)
+    return text
+
+
+def _write_image(frame, path, ext, prompt=None, extra_pnginfo=None, options=None):
     # PNG is the one still format here that can carry ComfyUI's workflow, and
     # PIL is what writes those text chunks -- so a PNG with metadata to embed
     # goes to PIL even where OpenImageIO is installed. Nothing meaningful is
@@ -229,22 +341,29 @@ def _write_image(frame, path, ext, prompt=None, extra_pnginfo=None):
     # truncates where OIIO rounds, so a saved PNG can sit one 255th below the
     # same frame written before this, which is also exactly what ComfyUI's own
     # SaveImage writes.
+    # A 16-bit PNG is beyond PIL (it has no 16-bit RGB), so that one is always
+    # OpenImageIO's, which writes the same text chunks from string attributes.
+    text = None
     if ext == "png":
-        meta = _pnginfo(prompt, extra_pnginfo)
-        if meta is not None:
-            _write_image_pil(frame, path, ext, meta)
-            return
+        if _option(options, "bit_depth", BIT_DEPTHS, ext) == "16":
+            text = _workflow_text(prompt, extra_pnginfo)
+        else:
+            meta = _pnginfo(prompt, extra_pnginfo)
+            if meta is not None:
+                _write_image_pil(frame, path, ext, meta, options)
+                return
 
     try:
         import OpenImageIO  # noqa: F401
-        _write_image_oiio(frame, path, ext)
+        _write_image_oiio(frame, path, ext, options, text)
         return
     except ImportError:
         if ext in _OIIO_ONLY:
             raise RuntimeError(
                 f"'{ext}' requires the OpenImageIO python module "
                 "(pip install OpenImageIO)")
-        _write_image_pil(frame, path, ext)
+        _write_image_pil(frame, path, ext, _pnginfo(prompt, extra_pnginfo) if ext == "png" else None,
+                         options)
 
 
 # ── video writing (imageio + imageio_ffmpeg) ─────────────────────────────────
@@ -267,7 +386,7 @@ def _write_video(frames, path, fps, ext, quality=8):
     import imageio
 
     fps = float(fps) if fps and fps > 0 else 24.0
-    q = max(1, min(10, int(quality if quality is not None else 8)))
+    q = max(1.0, min(10.0, float(quality if quality is not None else 8)))
     if ext == "webm":
         # VP9 takes no notice of imageio's quality; its own knob is the
         # constant-quality CRF (lower is better), 22 / 31 / 40 for the
@@ -377,6 +496,84 @@ def _write_temp_proxies(frames, tag):
     return frames_out
 
 
+# ── versions ─────────────────────────────────────────────────────────────────
+# A sequence is named by its frame numbers, not by a counter, so two runs with
+# one prefix write the same names. What keeps them apart is a version: `_v003` in
+# the prefix (in the file name, in a folder, or both — shot_v003/shot_v003), which
+# is moved past the latest one on disk. A prefix without one is given `_v001`.
+
+_VERSION = re.compile(r"_v(\d+)", re.I)
+
+
+def _expand_tokens(prefix, w, h):
+    """%width% / %year% … as folder_paths.get_save_image_path replaces them.
+    Done here because the version has to be settled on the final names, and
+    asking get_save_image_path for them creates the folder being looked for."""
+    if "%" not in prefix:
+        return prefix
+    now = time.localtime()
+    for token, value in (("width", w), ("height", h), ("year", now.tm_year),
+                         ("month", f"{now.tm_mon:02}"), ("day", f"{now.tm_mday:02}"),
+                         ("hour", f"{now.tm_hour:02}"), ("minute", f"{now.tm_min:02}"),
+                         ("second", f"{now.tm_sec:02}")):
+        prefix = prefix.replace(f"%{token}%", str(value))
+    return prefix
+
+
+def _versions_on_disk(folder, part, match, is_file):
+    """Version numbers already taken by siblings of *part* in *folder*: files
+    whose name starts with it (any frame number, any extension), or non-empty
+    folders named like it."""
+    head, tail = re.escape(part[:match.start()]), re.escape(part[match.end():])
+    rx = re.compile(f"^{head}_v(\\d+){tail}" + ("(?:[._].*)?$" if is_file else "$"), re.I)
+    found = []
+    try:
+        entries = list(os.scandir(folder))
+    except OSError:
+        return found
+    for entry in entries:
+        m = rx.match(entry.name)
+        if not m:
+            continue
+        try:
+            if is_file:
+                ok = entry.is_file()
+            else:
+                ok = entry.is_dir() and any(os.scandir(entry.path))
+        except OSError:
+            ok = False
+        if ok:
+            found.append(int(m.group(1)))
+    return found
+
+
+def versioned_prefix(filename_prefix, out_dir, w=0, h=0):
+    """*filename_prefix* with its version set to one no earlier run has used.
+
+    The version in the prefix is where counting starts: `shot_v003` writes v003
+    when nothing later is on disk, and one past the latest otherwise. Its digit
+    count is kept. Without a version the prefix gets `_v001` and the same rule.
+    Returns (prefix, version)."""
+    prefix = _expand_tokens((filename_prefix or "bEpic").strip().strip('"') or "bEpic", w, h)
+    parts = [p for p in re.split(r"[\\/]+", prefix) if p]
+    if not parts:
+        parts = ["bEpic"]
+    last = lambda part: (list(_VERSION.finditer(part)) or [None])[-1]  # noqa: E731
+    if not any(last(p) for p in parts):
+        parts[-1] += "_v001"
+    index = next(i for i, p in enumerate(parts) if last(p))
+    match = last(parts[index])
+    given, digits = int(match.group(1)), len(match.group(1))
+    found = _versions_on_disk(os.path.join(out_dir, *parts[:index]), parts[index], match,
+                              is_file=index == len(parts) - 1)
+    version = max(given, max(found) + 1) if found else given
+    for i, part in enumerate(parts):
+        m = last(part)
+        if m:
+            parts[i] = f"{part[:m.start()]}{m.group(0)[:2]}{version:0{digits}d}{part[m.end():]}"
+    return "/".join(parts), version
+
+
 def _prepare_output(filename_prefix, w, h):
     """Resolve (full_folder, filename, counter, subfolder) for `filename_prefix`
     under ComfyUI's output dir, pre-creating any subfolder in the prefix so
@@ -470,7 +667,7 @@ def is_video_input(obj):
 
 
 def write_video_input(video_obj, save_to_output, filename_prefix, file_format, fps,
-                      prompt=None, extra_pnginfo=None):
+                      prompt=None, extra_pnginfo=None, options=None):
     """Handle a ComfyUI VIDEO input: always produce a viewer-playable file, and
     persist it to ./output when the toggle is on. Returns (saved_paths,
     viewer_frames). mp4 targets use the video's own encoder (keeps audio); other
@@ -537,14 +734,15 @@ def write_video_input(video_obj, save_to_output, filename_prefix, file_format, f
     # Non-mp4 output format: extract frames and route through the image/video
     # writer (audio is dropped for these formats).
     images = video_obj.get_components().images
-    return write_output(images, filename_prefix, ext, rate, prompt, extra_pnginfo)
+    return write_output(images, filename_prefix, ext, rate, prompt, extra_pnginfo,
+                        options=options)
 
 
 # ── public entry point ───────────────────────────────────────────────────────
 
 def write_output(tensor, filename_prefix, file_format, fps,
                  prompt=None, extra_pnginfo=None,
-                 sequence=False, first_frame=1001, padding=4):
+                 sequence=False, first_frame=1001, padding=4, options=None):
     """Persist `tensor` to the ComfyUI output directory in `file_format`.
 
     Returns (saved_paths, viewer_frames): `saved_paths` are the files written to
@@ -560,9 +758,11 @@ def write_output(tensor, filename_prefix, file_format, fps,
     `sequence` switches still images from ComfyUI's `prefix_00001_.ext` to the
     frame-numbered `prefix.1001.ext` the rest of a VFX pipeline expects:
     numbering starts at `first_frame`, and `padding` sets the digit count.
-    Unlike the counter-based scheme those names are the same on every run, so a
-    re-render replaces the frames it wrote before instead of piling up a second
-    copy beside them."""
+    Those names are the same on every run, so each run of a sequence is written
+    under a version of its own (see versioned_prefix): `prefix_v002.1001.ext`.
+
+    `options` are the per-format settings — bit_depth, compression, quality,
+    compress_level; one that the format has no use for is ignored."""
     if tensor is None:
         return [], []
     if folder_paths is None:
@@ -572,6 +772,9 @@ def write_output(tensor, filename_prefix, file_format, fps,
     frames = _to_frames(tensor)
     n, h, w = frames.shape[0], frames.shape[1], frames.shape[2]
 
+    if sequence and not is_video(ext):
+        filename_prefix, _version = versioned_prefix(
+            filename_prefix, folder_paths.get_output_directory(), w, h)
     full_folder, filename, counter, subfolder = _prepare_output(filename_prefix, w, h)
 
     saved, viewer_frames = [], []
@@ -579,7 +782,9 @@ def write_output(tensor, filename_prefix, file_format, fps,
     if is_video(ext):
         file = f"{filename}_{counter:05}_.{ext}"
         path = os.path.join(full_folder, file)
-        _write_video(frames, path, fps, ext)
+        quality = _int_option(options, "quality", QUALITY_FORMATS, ext, 1, 100)
+        _write_video(frames, path, fps, ext,
+                     quality / 10.0 if quality is not None else 8)
         saved.append(path)
         # Companion PNG (same name) carrying the ComfyUI workflow, reused as the
         # history thumbnail — a video container can't hold ComfyUI's metadata.
@@ -606,7 +811,7 @@ def write_output(tensor, filename_prefix, file_format, fps,
             file = (f"{filename}.{start + i:0{pad}d}.{ext}" if sequence
                     else f"{filename}_{counter:05}_.{ext}")
             path = os.path.join(full_folder, file)
-            _write_image(frames[i], path, ext, prompt, extra_pnginfo)
+            _write_image(frames[i], path, ext, prompt, extra_pnginfo, options)
             saved.append(path)
             counter += 1
         print(f"[bEpicSendToViewer] wrote {n} {ext} file(s) to {full_folder}")
