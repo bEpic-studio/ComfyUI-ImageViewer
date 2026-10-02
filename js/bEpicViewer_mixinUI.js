@@ -331,6 +331,7 @@ export const UIMixin = {
                 if (!res.ok) throw new Error('Request failed');
                 const js = await res.json();
                 dlgWin.alert(`Cleared ${js.deleted || 0} files from bEpic temp cache.`);
+                this.forgetCachedFrames();
                 try {
                     this.history        = {};
                     this.previewBackup  = null;

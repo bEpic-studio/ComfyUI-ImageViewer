@@ -229,6 +229,7 @@ export const PlaybackMixin = {
         }
         this.updateTicks(Math.max(0, bounds.max - bounds.min));
         this.updateRangeOverlay(imgCount);
+        this.queueCacheMarks();
         // Keep roto keyframe ticks + the Roto Curves aligned to new timeline bounds.
         if (this._toolState && this._toolState.active === 'roto') {
             this._rotoRenderTimelineKeys && this._rotoRenderTimelineKeys();
@@ -274,6 +275,73 @@ export const PlaybackMixin = {
         }
         ticksContainer.innerHTML = '';
         ticksContainer.appendChild(frag);
+    },
+
+    // ── Cache marks ──────────────────────────────────────────────────────────
+    //
+    // A green mark over each frame of the sequence that has been loaded in this
+    // page: the browser holds its bytes and the server its converted file, so
+    // going back to it costs a revalidation rather than a decode and a download.
+    // "Loaded" is by URL, and the input colourspace is part of the URL — pick
+    // another one and the marks show what is cached for that.
+
+    /** A frame's URL finished loading. */
+    noteFrameCached(url) {
+        if (!url) return;
+        if (!this._cachedUrls) this._cachedUrls = new Set();
+        if (this._cachedUrls.has(url)) return;
+        this._cachedUrls.add(url);
+        this.queueCacheMarks();
+    },
+
+    /** The server's cache was emptied: nothing is cached any more. */
+    forgetCachedFrames() {
+        this._cachedUrls = new Set();
+        this.queueCacheMarks();
+    },
+
+    // At most once per painted frame: playback loads a frame per tick.
+    queueCacheMarks() {
+        if (this._cacheMarksQueued) return;
+        const win = (this.container && this.container.ownerDocument.defaultView) || window;
+        this._cacheMarksQueued = true;
+        win.requestAnimationFrame(() => {
+            this._cacheMarksQueued = false;
+            this.renderCacheMarks();
+        });
+    },
+
+    renderCacheMarks() {
+        const box = this.container && this.container.querySelector('#timeline-cache');
+        if (!box) return;
+        const imgs   = this._baseFrames() || [];
+        const cached = this._cachedUrls;
+        const stills = imgs.length > 1 && cached && cached.size
+            && !(this.isPrevizTab && this.isPrevizTab())
+            && !this._frameIsVideo(imgs[0]) && !this._frameIsModel(imgs[0]);
+        let html = '';
+        if (stills) {
+            const bounds = this.getTimelineBounds(imgs.length);
+            const span   = bounds.max - bounds.min;
+            if (span > 0) {
+                const has = (d) => {
+                    const o = imgs[this.displayFrameToImageIndex(d, imgs.length)];
+                    return !!(o && (o.path || o.url) && cached.has(this.buildImgUrl(o)));
+                };
+                // One element per run of cached frames, each frame half a step
+                // either side of its position.
+                const pct = (v) => (Math.max(0, Math.min(span, v)) / span * 100).toFixed(3);
+                for (let d = bounds.min; d <= bounds.max; d++) {
+                    if (!has(d)) continue;
+                    let e = d;
+                    while (e < bounds.max && has(e + 1)) e++;
+                    const a = d - bounds.min - 0.5, b = e - bounds.min + 0.5;
+                    html += `<i style="left:${pct(a)}%;width:${(pct(b) - pct(a)).toFixed(3)}%"></i>`;
+                    d = e;
+                }
+            }
+        }
+        if (box._marks !== html) { box._marks = html; box.innerHTML = html; }
     },
 
     // ── Timeline event setup ─────────────────────────────────────────────────
@@ -616,6 +684,7 @@ export const PlaybackMixin = {
         // server before dropping anything, so a transient failure costs nothing.
         imgEl.onerror = () => { if (this.noteMediaLoadFailed) this.noteMediaLoadFailed(); };
         imgEl.onload = () => {
+            this.noteFrameCached(url);
             if (onLoadCallback) onLoadCallback();
         };
         if (imgEl.src !== url) { imgEl.src = url; return; }

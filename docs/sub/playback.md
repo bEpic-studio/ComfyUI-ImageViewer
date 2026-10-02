@@ -12,6 +12,12 @@
 
 The timeline slider stretches across most of the playback toolbar. It shows major and minor tick marks as visual reference.
 
+### Cached Frames
+
+A thin **green mark** along the top edge of the timeline shows which frames of an image sequence are cached: they have been loaded once, so going back to them is quick. Frames are cached as you look at them — scrub or play through a sequence once and the bar fills in.
+
+The marks are per [input colourspace](channels-exposure.md#input-colourspace): pick another one and they show what is cached for that. They start empty after a page reload and after **Clear Cache**. Videos and 3D tabs have none.
+
 ### Scrubbing
 
 Click anywhere on the timeline to jump to that frame. Click and drag to scrub through frames interactively — the fastest way to review a long sequence.
