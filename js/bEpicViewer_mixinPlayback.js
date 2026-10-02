@@ -27,7 +27,10 @@ export const PlaybackMixin = {
     // keeps the cache-buster rather than risk a stale frame. Only path-less
     // frames (a workflow's own SaveImage output) land there, so nothing the
     // viewer itself writes pays that cost.
-    buildImgUrl(imgObj) {
+    //
+    // `opts.noColor` leaves the input colourspace out: for a thumbnail, a
+    // texture — anything that is not the picture being looked at.
+    buildImgUrl(imgObj, opts) {
         if (!imgObj) return '';
         // Dropped OS files are served straight from an in-memory blob: URL — it is
         // already unique per file, so never rewrite it.
@@ -43,6 +46,10 @@ export const PlaybackMixin = {
             if (Number.isFinite(Number(imgObj.frame))) url += `&frame=${Math.max(0, Math.round(imgObj.frame))}`;
             // The file's own bytes, not a display proxy (an HDR sky needs its range).
             if (imgObj.raw && imgObj.external) url += '&raw=1';
+            // The input colourspace picked beside Exposure; the server converts
+            // from it to sRGB. Part of the URL, so each choice caches apart.
+            const cs = (opts && opts.noColor) || imgObj.raw ? '' : this.colorParam(imgObj);
+            if (cs) url += `&cs=${encodeURIComponent(cs)}`;
             return api.apiURL(url);
         }
         let params = `?filename=${encodeURIComponent(imgObj.filename || '')}`;
@@ -83,13 +90,16 @@ export const PlaybackMixin = {
         if (imgObj && imgObj.thumb) {
             // A dropped video's poster is an inline data:/blob: URL, not a temp path.
             if (/^(data:|blob:)/.test(imgObj.thumb)) return imgObj.thumb;
-            return this.buildImgUrl({ path: imgObj.thumb, type: "temp" });
+            return this.buildImgUrl({ path: imgObj.thumb, type: "temp" }, { noColor: true });
         }
         // A dropped OS file lives in an in-memory blob: URL the server cannot
         // reach, so it is the one case that still hands over the whole thing.
         if (imgObj && !imgObj.url) {
             if (imgObj.path) {
-                return api.apiURL(`/bepic/thumb?path=${encodeURIComponent(imgObj.path)}`);
+                // In the picture's input colourspace, like the picture itself.
+                const cs = this.colorParam(imgObj);
+                return api.apiURL(`/bepic/thumb?path=${encodeURIComponent(imgObj.path)}`
+                    + (cs ? `&cs=${encodeURIComponent(cs)}` : ''));
             }
             // A node run gives its outputs no path — {filename, subfolder, type} is
             // the only name they have, the same triple /view takes. This is the
@@ -102,7 +112,7 @@ export const PlaybackMixin = {
                 return api.apiURL(`/bepic/thumb${q}`);
             }
         }
-        return this.buildImgUrl(imgObj);
+        return this.buildImgUrl(imgObj, { noColor: true });
     },
 
     // ── Shape info overlay ───────────────────────────────────────────────────
@@ -442,6 +452,7 @@ export const PlaybackMixin = {
         this.currentFrame = this.imageIndexToDisplayFrame(imgIdx, imgs.length);
 
         const i       = imgs[imgIdx];
+        this.colorShow(i);
         const baseUrl = this.buildImgUrl(i);
 
         // Only update src when URL actually changes (avoids re-decode flicker)

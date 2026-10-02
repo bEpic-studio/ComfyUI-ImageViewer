@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 import re
@@ -119,7 +120,7 @@ def _frame_arg(request):
         return 0
 
 
-def _file_response(path, prim=None, frame=0):
+def _file_response(path, prim=None, frame=0, cs=None):
     """Serve an image/video file, swapping in a browser-renderable PNG proxy for
     formats an <img> can't decode (exr / tiff / dpx / ...).
 
@@ -128,15 +129,25 @@ def _file_response(path, prim=None, frame=0):
     aiohttp already sends) while unchanged frames cost a 304 instead of a full
     re-download. That is what lets the viewer drop the per-request cache-buster
     it used to append, which was defeating its own frame-caching.
+
+    `cs` is the input colourspace picked in the viewer: the picture is converted
+    from it to sRGB instead of getting the proxy's fixed treatment.
     """
     path = _usd_display_path(path, prim, frame)
     if media_resolve is not None:
-        try:
-            proxy = media_resolve.proxy_for_display(path)
-            if proxy:
-                path = proxy
-        except Exception as e:
-            print(f"[bEpicViewer] display proxy failed for {path}: {e}")
+        proxy, done = None, False
+        if cs:
+            try:
+                proxy, done = media_resolve.proxy_for_colorspace(path, cs), True
+            except Exception as e:
+                print(f"[bEpicViewer] colour transform failed for {path}: {e}")
+        if not done:
+            try:
+                proxy = media_resolve.proxy_for_display(path)
+            except Exception as e:
+                print(f"[bEpicViewer] display proxy failed for {path}: {e}")
+        if proxy:
+            path = proxy
     from aiohttp import web
     return web.FileResponse(path, headers={"Cache-Control": "no-cache"})
 
@@ -288,6 +299,19 @@ try:
             except Exception as e:
                 print(f"[bEpicViewer] route register failed {method} {path}: {e}")
 
+        async def _serve(path, prim=None, frame=0, cs=None):
+            """_file_response off the event loop: decoding and converting a
+            frame takes long enough to hold up every other request."""
+            return await asyncio.get_running_loop().run_in_executor(
+                None, _file_response, path, prim, frame, cs)
+
+        async def _bepic_colorspaces(request):
+            """The input colourspaces the viewer's selector offers, which of
+            them is sRGB (nothing done) and which is plain linear."""
+            from . import color_io
+            info = await asyncio.get_running_loop().run_in_executor(None, color_io.info)
+            return web.json_response(info)
+
         async def _bepic_raw_view(request):
             params = dict(request.query)
             path = params.get('path') or params.get('filename')
@@ -307,7 +331,7 @@ try:
             if not os.path.exists(cand):
                 return web.Response(status=404, text="file not found")
 
-            return _file_response(cand)
+            return await _serve(cand, cs=params.get("cs"))
 
         async def _bepic_probe_paths(request):
             """Report which of the given paths this server can no longer serve.
@@ -535,7 +559,7 @@ try:
             # `prim` narrows a USD stage (or an Alembic cache) to one subtree —
             # how a layout arrives as separate items the viewer can place; a
             # cache also takes `frame`, since it holds geometry per frame.
-            return _file_response(path, params.get("prim"), _frame_arg(request))
+            return await _serve(path, params.get("prim"), _frame_arg(request), params.get("cs"))
 
         async def _bepic_thumb(request):
             """Serve a small cached stand-in for an image, for the thumbnail strips.
@@ -581,8 +605,8 @@ try:
             if media_resolve is not None:
                 try:
                     size = params.get('max')
-                    thumb = (media_resolve.thumb_for(path, size) if size
-                             else media_resolve.thumb_for(path))
+                    thumb = media_resolve.thumb_for(
+                        path, size or media_resolve.THUMB_MAX_SIDE, params.get('cs'))
                     if thumb and os.path.isfile(thumb):
                         # Cache hard: a thumbnail is keyed on the source's mtime, so
                         # a changed source lands on a different cache entry rather
@@ -1149,6 +1173,8 @@ try:
         _safe_add("POST", "/bepic/browse_frames", _bepic_browse_frames)
         _safe_add("POST", "/api/bepic/browse_frames", _bepic_browse_frames)
         _safe_add("GET", "/bepic/view_file", _bepic_view_file)
+        _safe_add("GET", "/bepic/colorspaces", _bepic_colorspaces)
+        _safe_add("GET", "/api/bepic/colorspaces", _bepic_colorspaces)
         _safe_add("GET", "/bepic/thumb", _bepic_thumb)
         _safe_add("GET", "/api/bepic/thumb", _bepic_thumb)
         _safe_add("GET", "/api/bepic/view_file", _bepic_view_file)

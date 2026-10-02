@@ -230,7 +230,8 @@
     white-space: nowrap;
 }
 
-#rgb-channel-sel {
+#rgb-channel-sel,
+#color-in-sel {
     background: #111;
     border: 1px solid #444;
     color: #eee;
@@ -240,8 +241,17 @@
     min-height: 22px;
 }
 
-#rgb-channel-sel:hover {
+#rgb-channel-sel:hover,
+#color-in-sel:hover {
     border-color: #f60;
+}
+
+#color-in-sel {
+    max-width: 170px;
+}
+
+#color-in-sel:disabled {
+    opacity: 0.45;
 }
 
 #exposure-slider {

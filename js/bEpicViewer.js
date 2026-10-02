@@ -10,6 +10,7 @@ import { PrevizWorldMixin } from "./bEpicViewer_previzWorld.js";
 import { PlaybackMixin } from "./bEpicViewer_mixinPlayback.js";
 import { ParamsMixin }   from "./bEpicViewer_mixinParams.js";
 import { UIMixin }       from "./bEpicViewer_mixinUI.js";
+import { ColorMixin }    from "./bEpicViewer_color.js";
 import { ToolsMixin }    from "./bEpicViewer_tools.js";
 import { RotoMixin }     from "./bEpicViewer_roto.js";
 import { AnnotateMixin } from "./bEpicViewer_annotate.js";
@@ -526,6 +527,7 @@ class ViewerPanel extends HTMLElement {
         this.exposureSlider   = sr.getElementById('exposure-slider');
         this.exposureValue    = sr.getElementById('exposure-value');
         this.rgbChannelSel    = sr.getElementById('rgb-channel-sel');
+        this.colorInSel       = sr.getElementById('color-in-sel');
         this.previzPanel      = sr.getElementById('previz-panel');
         this.totalFrameEl     = sr.getElementById('total-f');
         this.curvesPanel      = sr.getElementById('curves-panel');
@@ -884,6 +886,7 @@ class ViewerPanel extends HTMLElement {
             this.rgbChannelSel.onchange = (e) => this.setChannelView(e.target.value);
             this.setChannelView(this.rgbChannelSel.value || 'all');
         }
+        this.initColor();
 
         if (this.exposureControl) {
             this.exposureControl.oncontextmenu = (e) => {
@@ -893,6 +896,8 @@ class ViewerPanel extends HTMLElement {
             this.exposureControl.onmousedown = (e) => {
                 if (e.button !== 0) return;
                 if (e.target === this.exposureSlider) return;
+                // A menu in the bar is being opened, not the exposure reset.
+                if (e.target.closest && e.target.closest('select')) return;
                 this.resetExposure();
             };
         }
@@ -1204,6 +1209,7 @@ Object.assign(
     PlaybackMixin,
     ParamsMixin,
     UIMixin,
+    ColorMixin,
     ToolsMixin,
     RotoMixin,
     AnnotateMixin,

@@ -36,7 +36,7 @@ export const ModelMixin = {
                 onThumbnail: (frame, dataUrl) => this._storeModelThumbnail(frame, dataUrl),
                 // Previz: the scene owns where everything is, so each move the
                 // view makes is handed back to it instead of kept in three.
-                srcUrl: (src) => this.buildImgUrl(src),
+                srcUrl: (src) => this.buildImgUrl(src, { noColor: true }),
                 onPick: (id, add) => this.previzSelect(id, { add }),
                 // `props` arrives when the view knows which ones it changed —
                 // moving a pivot writes the position too.

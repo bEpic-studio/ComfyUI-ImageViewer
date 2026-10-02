@@ -219,6 +219,101 @@ def proxy_for_display(path):
     return None
 
 
+# ── The input colourspace picked in the viewer ───────────────────────────────
+#
+# `cs` on the file routes names the colourspace a picture is in; it is converted
+# from that to sRGB (color_io) and cached beside the display proxies, one entry
+# per source and colourspace. A browser format that is already sRGB is served as
+# the file it is.
+
+# Left alone: vectors, animations, and what neither reader here handles well.
+_NO_COLOR_EXTS = {".svg", ".gif", ".ico", ".avif"}
+
+
+def _read_float(path):
+    """(rgb, alpha) of a picture: float32 [H,W,3], contiguous, and [H,W] or None."""
+    import numpy as np
+    alpha_index = -1
+    try:
+        import OpenImageIO as oiio
+        buf = oiio.ImageBuf(path)
+        if buf.has_error:
+            raise RuntimeError(buf.geterror())
+        arr = np.asarray(buf.get_pixels(oiio.FLOAT), dtype="float32")
+        alpha_index = buf.spec().alpha_channel
+    except ImportError:
+        from PIL import Image
+        with Image.open(path) as im:
+            if im.mode.startswith("I"):
+                arr = np.asarray(im).astype("float32") / 65535.0
+            elif im.mode == "F":
+                arr = np.asarray(im).astype("float32")
+            else:
+                has_alpha = "A" in im.getbands()
+                arr = np.asarray(im.convert("RGBA" if has_alpha else "RGB")).astype("float32") / 255.0
+                alpha_index = 3 if has_alpha else -1
+    if arr.ndim == 2:
+        arr = arr[:, :, None]
+    alpha = arr[:, :, alpha_index] if 0 <= alpha_index < arr.shape[2] else None
+    colour = [c for c in range(arr.shape[2]) if c != alpha_index][:3]
+    rgb = arr[:, :, colour] if len(colour) == 3 else np.repeat(arr[:, :, colour[:1]], 3, axis=2)
+    return np.ascontiguousarray(rgb, dtype="float32"), alpha
+
+
+def _to_u8(arr):
+    """Float [0,1] to uint8, in place where it can: NaN and negatives to 0,
+    everything over 1 to 255."""
+    import numpy as np
+    arr = np.multiply(arr, 255.0, out=arr if arr.flags.writeable and arr.flags.c_contiguous else None)
+    arr += 0.5
+    np.fmax(arr, 0.0, out=arr)       # fmax / fmin drop a NaN for the other operand
+    np.fmin(arr, 255.0, out=arr)
+    return arr.astype("uint8")
+
+
+def proxy_for_colorspace(path, colorspace):
+    """`path` converted from `colorspace` to sRGB, as a cached file an <img>
+    shows — or None when the file can be served as it is (not a still picture, or
+    already sRGB in a format an <img> shows). Raises when it cannot be read.
+
+    An opaque picture is cached as a JPEG (quality 95, no chroma subsampling), one
+    with alpha as a PNG. The encode is most of what a frame costs: on a grainy 4K
+    frame PNG takes half a second and 20 MB even at level 1, the JPEG 60 ms and
+    2 MB. This is what is looked at, never what is saved.
+    """
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in IMAGE_EXTS or ext in _NO_COLOR_EXTS:
+        return None
+    from . import color_io
+    identity = color_io.is_identity(colorspace)
+    if identity and ext in BROWSER_IMAGE_EXTS:
+        return None
+
+    import threading
+    import numpy as np
+    from PIL import Image
+    key = "srgb" if identity else hashlib.sha1(colorspace.encode("utf-8", "replace")).hexdigest()[:10]
+    base = os.path.splitext(_cache_path(path, "cs" + key))[0]
+    for cached in (base + ".jpg", base + ".png"):
+        if _cached(cached, path):
+            return cached
+
+    rgb, alpha = _read_float(path)
+    color_io.to_srgb(rgb, colorspace)
+    u8 = _to_u8(rgb)
+    # Written aside and moved in: two requests for one frame can be here at once.
+    tmp = f"{base}.{threading.get_ident()}.tmp"
+    if alpha is not None:
+        dst = base + ".png"
+        Image.fromarray(np.dstack([u8, _to_u8(np.array(alpha, dtype="float32"))]), "RGBA").save(
+            tmp, "PNG", compress_level=1)
+    else:
+        dst = base + ".jpg"
+        Image.fromarray(u8, "RGB").save(tmp, "JPEG", quality=95, subsampling=0)
+    os.replace(tmp, dst)
+    return dst
+
+
 # ── Thumbnails for the strips ────────────────────────────────────────────────
 #
 # The history strip and the file browser show tiles ~83px wide. Pointing those at
@@ -236,8 +331,11 @@ def proxy_for_display(path):
 THUMB_MAX_SIDE = 256
 
 
-def thumb_for(path, max_side=THUMB_MAX_SIDE):
+def thumb_for(path, max_side=THUMB_MAX_SIDE, colorspace=None):
     """A small cached PNG standing in for `path` in a thumbnail strip.
+
+    `colorspace` is the input colourspace picked in the viewer, so a tile is
+    converted the way the picture it stands for is.
 
     None means "just serve the original": the file is already no bigger than a
     thumbnail, it is a vector, or nothing on this install can decode it. The
@@ -257,7 +355,10 @@ def thumb_for(path, max_side=THUMB_MAX_SIDE):
     try:
         # The size is part of the key: two callers asking for different sizes must
         # not hand each other the wrong picture.
-        dst = _cache_path(path, "thumb%d" % max_side)
+        kind = "thumb%d" % max_side
+        if colorspace:
+            kind += "c" + hashlib.sha1(colorspace.encode("utf-8", "replace")).hexdigest()[:8]
+        dst = _cache_path(path, kind)
     except Exception:
         return None
     if _cached(dst, path):
@@ -265,9 +366,16 @@ def thumb_for(path, max_side=THUMB_MAX_SIDE):
 
     # Read through the display proxy for the formats an <img> cannot decode, so an
     # exr thumbnail gets the same colour treatment as the exr itself.
-    src = path
-    if needs_proxy(path):
-        src = proxy_for_display(path) or path
+    src = None
+    if colorspace:
+        try:
+            src = proxy_for_colorspace(path, colorspace)
+        except Exception:
+            src = None
+    if src is None:
+        src = path
+        if needs_proxy(path):
+            src = proxy_for_display(path) or path
 
     try:
         from PIL import Image

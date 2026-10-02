@@ -55,7 +55,7 @@ Below the sequence fields the node shows the settings the chosen format has, and
 
 Saved PNGs carry the ComfyUI workflow in their text chunks, exactly as SaveImage writes it, so dropping one back onto the canvas rebuilds the graph that made it. A video container can't hold that, so video outputs get it in a same-named companion PNG — which doubles as the clip's thumbnail in the viewer's history. Starting ComfyUI with `--disable-metadata` switches this off, the same as it does for the standard save nodes.
 
-Whatever the node writes is also **reported to ComfyUI as the run's output**, the way SaveImage, SaveVideo and SaveGLB report theirs: it shows up in the queue history (`/history`), in the Assets panel, and to anything — scripts, agents — that asks ComfyUI what a prompt produced. With `save_to_output` on that is the saved files (the EXRs, not the PNG proxies the viewer shows for them; a video, not its companion PNG); with it off, the temp previews, just as PreviewImage records its own. The node still draws no preview of its own on the canvas — that picture is the viewer's.
+Whatever the node writes is also **reported to ComfyUI as the run's output**, the way SaveImage, SaveVideo and SaveGLB report theirs: it shows up in the queue history (`/history`), in the Assets panel, and to anything — scripts, agents — that asks ComfyUI what a prompt produced. With `save_to_output` on that is the saved files (a video, not its companion PNG); with it off, the temp previews, just as PreviewImage records its own. The node still draws no preview of its own on the canvas — that picture is the viewer's.
 
 ---
 

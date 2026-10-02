@@ -474,28 +474,6 @@ def _thumb_from_video_file(video_path, tag):
         return None
 
 
-def _write_temp_proxies(frames, tag):
-    """Write browser-displayable PNG proxies to the temp dir for formats the
-    viewer can't render directly (exr / tiff / dpx / ...). Returns viewer frame
-    dicts pointing at the proxies."""
-    from PIL import Image
-    try:
-        tmp = folder_paths.get_temp_directory()
-        os.makedirs(tmp, exist_ok=True)
-    except Exception:
-        return []
-    safe = "".join(c for c in (tag or "out") if c.isalnum() or c in "-_") or "out"
-    rnd = random.randint(1, 1_000_000)
-    frames_out = []
-    for i in range(frames.shape[0]):
-        u8 = np.clip(frames[i, :, :, :3] * 255.0, 0, 255).astype(np.uint8)
-        name = f"bEpic_proxy_{safe}_{i:04d}_{rnd}.png"
-        path = os.path.join(tmp, name)
-        Image.fromarray(u8, "RGB").save(path, compress_level=4)
-        frames_out.append({"path": path, "type": "temp"})
-    return frames_out
-
-
 # ── versions ─────────────────────────────────────────────────────────────────
 # A sequence is named by its frame numbers, not by a counter, so two runs with
 # one prefix write the same names. What keeps them apart is a version: `_v003` in
@@ -747,8 +725,8 @@ def write_output(tensor, filename_prefix, file_format, fps,
 
     Returns (saved_paths, viewer_frames): `saved_paths` are the files written to
     ./output; `viewer_frames` are frame dicts for the viewer to display — the
-    saved files themselves for video and browser-friendly images, or temp PNG
-    proxies for formats a browser can't render (exr / tiff / dpx / ...).
+    saved files themselves (the viewer's file route converts the formats a
+    browser can't render — exr / tiff / dpx / ... — as their frames are shown).
 
     Saved PNGs carry the ComfyUI workflow in their text chunks, the way SaveImage
     writes it, so they can be dragged back in to rebuild the graph. Video outputs
@@ -815,9 +793,10 @@ def write_output(tensor, filename_prefix, file_format, fps,
             saved.append(path)
             counter += 1
         print(f"[bEpicSendToViewer] wrote {n} {ext} file(s) to {full_folder}")
-        if ext in _BROWSER_IMG:
-            viewer_frames = [{"path": p, "type": "output"} for p in saved]
-        else:
-            viewer_frames = _write_temp_proxies(frames, filename)
+        # The viewer is handed the files themselves. One an <img> cannot show
+        # (exr / tiff / dpx / ...) is converted by the file route when its frame
+        # is asked for, in the input colourspace picked in the viewer — not
+        # copied to PNG here, every frame, before anyone has looked.
+        viewer_frames = [{"path": p, "type": "output"} for p in saved]
 
     return saved, viewer_frames
