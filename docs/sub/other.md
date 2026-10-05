@@ -115,6 +115,18 @@ Any node carrying an `IMAGE`, `MASK`, `VIDEO`, `MESH` or 3D-file output — a VA
 
 ---
 
+## Docking — the viewer as a panel
+
+By default the viewer floats over the canvas. **Docked**, it is a panel of its own beside the canvas: the canvas gets the rest of the window, so nothing is covered and ComfyUI's own side panels (Workflows, Assets, Models, …) still open next to it.
+
+- Click the **Dock** button in the viewer's header (left of Undock) to dock it to the side used last — the right, the first time — and again to float it. **Shift+D** does the same while the viewer is hovered.
+- The layout menu has **Dock right / Dock left / Dock bottom / Float**, and **Settings → bEpic Viewer → Docking** has the same choice.
+- Drag the docked viewer's inner edge to resize it. Side and size are remembered.
+- Hiding the viewer, or undocking it to its own window, gives the space back to the canvas; showing it again takes it back.
+- Applying a layout preset floats the viewer first: a preset says where the *floating* viewer goes.
+
+---
+
 ## Undocking — Multi-Monitor Mode
 
 Click the **Undock** button (detach icon, top-right of the viewer) to pop the viewer into its own dedicated browser window.

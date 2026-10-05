@@ -17,6 +17,7 @@ import { AnnotateMixin } from "./bEpicViewer_annotate.js";
 import { DnDMixin }      from "./bEpicViewer_mixinDnD.js";
 import { BrowserMixin }  from "./bEpicViewer_mixinBrowser.js";
 import { DockMixin }     from "./bEpicViewer_mixinDock.js";
+import { PageDockMixin } from "./bEpicViewer_mixinPageDock.js";
 import { ReconnectMixin } from "./bEpicViewer_mixinReconnect.js";
 import { ModelMixin }    from "./bEpicViewer_mixinModel.js";
 import { PrevizMixin }   from "./bEpicViewer_mixinPreviz.js";
@@ -475,6 +476,9 @@ class ViewerPanel extends HTMLElement {
         await this.loadFactoryDefault();
         await this.loadLayouts();
         this.applyFactoryDefault();
+        // After the floating layout is in place: docking remembers it to go back to.
+        try { this._initPageDock(); }
+        catch (e) { console.warn('bEpicViewer: page docking failed to start', e); }
         // Layout menu population can mutate nearby controls in some browsers,
         // so re-assert icon skin once layouts are ready.
         this._applyIconSkin();
@@ -760,6 +764,20 @@ class ViewerPanel extends HTMLElement {
         }
         this.undockBtn.onclick = () => this.toggleUndock();
 
+        // Dock to the page / float (bEpicViewer_mixinPageDock.js). Made here, not
+        // in the markup, like the buttons below: a cached copy of the markup from
+        // before it existed would otherwise simply not have it.
+        this.pageDockBtn = sr.getElementById('pagedock-btn');
+        if (!this.pageDockBtn) {
+            this.pageDockBtn           = document.createElement("button");
+            this.pageDockBtn.id        = "pagedock-btn";
+            this.pageDockBtn.className = "sprite-icon";
+            this.pageDockBtn.innerText = "";
+            this.undockBtn.parentNode.insertBefore(this.pageDockBtn, this.undockBtn);
+        }
+        this._setIcon(this.pageDockBtn, 'icon-dock-right');
+        this.pageDockBtn.onclick = () => this.togglePageDock();
+
         this.rangeBtn           = document.createElement("button");
         this.rangeBtn.id        = "range-btn";
         this.rangeBtn.className = "sprite-icon";
@@ -812,7 +830,8 @@ class ViewerPanel extends HTMLElement {
 
         if (this.layoutSel) this.layoutSel.onchange = async (e) => {
             const val = e.target.value;
-            if      (val === "__store__")        this.storeCurrentLayout();
+            if      (val.startsWith("__dock__:")) this.setPageDock(val.slice(9));
+            else if (val === "__store__")        this.storeCurrentLayout();
             else if (val === "__make_default__") this.storeFactoryDefault();
             else if (val === "__manage__")       this.openManagePanel();
             else                                 this.applyLayout(val);
@@ -1216,6 +1235,7 @@ Object.assign(
     DnDMixin,
     BrowserMixin,
     DockMixin,
+    PageDockMixin,
     SendFromNodeMixin,
     ReconnectMixin,
     ModelMixin,

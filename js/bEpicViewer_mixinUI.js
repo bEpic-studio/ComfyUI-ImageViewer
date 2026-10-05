@@ -1372,6 +1372,7 @@ export const UIMixin = {
 
     setupPanelDragging() {
         const startDrag = (e) => {
+            if (this.pageDockSide && this.pageDockSide()) return;   // docked: the page places it
             if (e.target.closest('.tab'))                return;
             if (e.target.closest('button, select, input')) return;
             const rect = this.getBoundingClientRect();

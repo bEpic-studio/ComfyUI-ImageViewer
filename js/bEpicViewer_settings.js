@@ -31,6 +31,10 @@ export const PREF = {
     compareMode:    P + "View.CompareMode",
     showInfo:       P + "View.ShowInfo",
     historyLimit:   P + "History.Limit",
+    dockSide:       P + "Dock.Side",
+    dockLastSide:   P + "Dock.LastSide",
+    dockWidth:      P + "Dock.Width",
+    dockHeight:     P + "Dock.Height",
     annotColor:     P + "Annotate.Color",
     annotSize:      P + "Annotate.BrushSize",
     annotTextSize:  P + "Annotate.TextSize",
@@ -202,6 +206,38 @@ function defs() {
             tooltip: "Older snapshots are dropped. Also set from the history panel's footer.",
             type: "number", defaultValue: 40, attrs: { min: 1, max: 500, step: 1 }, sortOrder: 680,
             onChange: panelApply(PREF.historyLimit),
+        },
+        // ── Docking (the viewer as a panel of the page; bEpicViewer_mixinPageDock.js) ──
+        {
+            id: PREF.dockSide, category: sec("Docking", "Side"),
+            name: "Viewer placement",
+            tooltip: "Floating: the viewer sits over the canvas. Docked: it is a panel of its own " +
+                     "beside the canvas, which gets the rest of the window, so ComfyUI's side panels " +
+                     "still open next to it. Also switched from the viewer's header button and its " +
+                     "layout menu.",
+            type: "combo", defaultValue: "",
+            options: opts([["", "Floating"], ["right", "Docked right"], ["left", "Docked left"],
+                           ["bottom", "Docked bottom"]]),
+            sortOrder: 670, onChange: panelApply(PREF.dockSide),
+        },
+        {
+            id: PREF.dockWidth, category: sec("Docking", "Width"),
+            name: "Docked width (left / right)",
+            tooltip: "In pixels. Also set by dragging the docked viewer's inner edge.",
+            type: "number", defaultValue: 520, attrs: { min: 240, max: 4000, step: 10 }, sortOrder: 660,
+            onChange: panelApply(PREF.dockWidth),
+        },
+        {
+            id: PREF.dockHeight, category: sec("Docking", "Height"),
+            name: "Docked height (bottom)",
+            tooltip: "In pixels. Also set by dragging the docked viewer's top edge.",
+            type: "number", defaultValue: 360, attrs: { min: 240, max: 4000, step: 10 }, sortOrder: 650,
+            onChange: panelApply(PREF.dockHeight),
+        },
+        {
+            // Which side the header button docks to: the last one used. State, not a choice.
+            id: PREF.dockLastSide, category: sec("Docking", "LastSide"),
+            name: "Last docked side", type: "hidden", defaultValue: "right",
         },
         // ── Annotate ──
         {
@@ -439,6 +475,18 @@ export const PrefsMixin = {
                 if (this.browserKindSel && prefKinds() !== (this._browserKinds || "")) {
                     this.browserKindSel.value = prefKinds();
                     this._browserFilterChanged({ now: true });
+                }
+                return;
+            case PREF.dockSide:
+                if (this.setPageDock && String(value || "") !== this.pageDockSide()) {
+                    this.setPageDock(String(value || ""), { save: false });
+                }
+                return;
+            case PREF.dockWidth:
+            case PREF.dockHeight:
+                if (this._pageDockSync && this.pageDockSide()) {
+                    this._pageDockSync();
+                    this._pageDockLaidOut();
                 }
                 return;
             case PREF.annotColor:

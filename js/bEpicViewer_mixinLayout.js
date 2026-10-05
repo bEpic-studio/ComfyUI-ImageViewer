@@ -54,6 +54,13 @@ export const LayoutMixin = {
             customKeys.forEach(k => frag.appendChild(mkOpt(`custom:${k}`, k)));
         }
 
+        // The viewer as a panel of the page, or floating (bEpicViewer_mixinPageDock.js).
+        frag.appendChild(mkOpt("", "──────────", true));
+        frag.appendChild(mkOpt("__dock__:right", "Dock right"));
+        frag.appendChild(mkOpt("__dock__:left", "Dock left"));
+        frag.appendChild(mkOpt("__dock__:bottom", "Dock bottom"));
+        frag.appendChild(mkOpt("__dock__:", "Float"));
+
         frag.appendChild(mkOpt("", "──────────", true));
         frag.appendChild(mkOpt("__manage__", "⚙️ Manage Layouts…"));
         frag.appendChild(mkOpt("__store__", "➕ Store Current"));
@@ -262,6 +269,8 @@ export const LayoutMixin = {
     },
 
     applyLayout(mode) {
+        // A layout says where the FLOATING viewer goes; docked, the page decides.
+        if (mode !== "__make_default__" && this.pageDockSide && this.pageDockSide()) this.setPageDock("");
         this.style.bottom = "auto"; this.style.right = "auto";
         this.style.top = "auto"; this.style.left = "auto";
         this.style.transform = "none";
