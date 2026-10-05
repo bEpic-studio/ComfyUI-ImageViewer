@@ -7,13 +7,21 @@ is a claim to be checked, never a permission.
 
 Allowed, always: ComfyUI's input, output and temp folders. On top of those, the
 user can allow more folders, e.g. a project drive:
-  - one per line in bepic_viewer_roots.txt, beside ComfyUI's own
-    extra_model_paths.yaml ('#' starts a comment), or
+  - one per line in ~/.bepic_viewer/roots.txt ('#' starts a comment; the file
+    named by BEPIC_VIEWER_ROOTS_FILE instead, when that is set), or
   - in the BEPIC_VIEWER_ROOTS environment variable, separated by ';' on Windows
     and ':' elsewhere — the form a launcher such as AYON can set.
 Both live where ComfyUI's web API can't write — its userdata routes are confined
 to the per-user folder. The file is re-read whenever it changes, so an edit
 needs no restart.
+
+The file is kept per OS user, beside the viewer's settings (viewer_settings.py),
+and NOT in ComfyUI's folder, where it used to be (bepic_viewer_roots.txt). That
+folder is a git checkout somebody else manages: a launcher or updater that runs
+`git stash --include-untracked` before switching versions swept the file into a
+stash, and the list was empty again at every start. The old file is still read
+— an install that lists folders there keeps working — and its folders are
+copied to the new file the first time, so they survive the next sweep.
 
 The viewer's settings page edits the file too (/bepic/roots). That is the one
 request that can widen the list, so it is fenced (`may_edit`): answered only
@@ -36,7 +44,18 @@ from urllib.parse import urlsplit
 import folder_paths
 
 ROOTS_ENV  = "BEPIC_VIEWER_ROOTS"
-ROOTS_FILE = os.path.join(folder_paths.base_path, "bepic_viewer_roots.txt")
+ROOTS_FILE_ENV = "BEPIC_VIEWER_ROOTS_FILE"
+LEGACY_FILE = os.path.join(folder_paths.base_path, "bepic_viewer_roots.txt")
+
+
+def _roots_file():
+    custom = os.environ.get(ROOTS_FILE_ENV, "").strip().strip('"')
+    if custom:
+        return os.path.abspath(os.path.expandvars(os.path.expanduser(custom)))
+    return os.path.join(os.path.expanduser("~"), ".bepic_viewer", "roots.txt")
+
+
+ROOTS_FILE = _roots_file()
 LOCKED_ENV = "BEPIC_VIEWER_ROOTS_LOCKED"
 REMOTE_EDIT_ENV = "BEPIC_VIEWER_ROOTS_REMOTE_EDIT"
 
@@ -87,17 +106,63 @@ def _env_entries():
     return [e.strip() for e in os.environ.get(ROOTS_ENV, "").split(os.pathsep) if e.strip()]
 
 
-def file_entries():
-    """The folders listed in the file, as written there."""
+def _read_entries(path):
     try:
-        with open(ROOTS_FILE, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             return [line.strip() for line in fh
                     if line.strip() and not line.lstrip().startswith("#")]
     except FileNotFoundError:
         return []
     except Exception as e:
-        print(f"[bEpicViewer] could not read {ROOTS_FILE}: {e}")
+        print(f"[bEpicViewer] could not read {path}: {e}")
         return []
+
+
+def _write_entries(path, entries, comments=None):
+    if comments is None:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                comments = [line.rstrip("\r\n") for line in fh if line.lstrip().startswith("#")]
+        except FileNotFoundError:
+            comments = _FILE_HEADER.rstrip("\n").split("\n")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(list(comments) + list(entries)) + "\n")
+    os.replace(tmp, path)
+
+
+def _merged(*lists):
+    """The entries of each list in order, each folder once."""
+    out, seen = [], set()
+    for entry in (e for entries in lists for e in entries):
+        key = os.path.normcase(expand(entry))
+        if key and key not in seen:
+            seen.add(key)
+            out.append(entry)
+    return out
+
+
+def _adopt_legacy():
+    """Copy what the old file in ComfyUI's folder lists into the user's file,
+    once per change of the old file: after that it no longer matters whether
+    the old one is swept away."""
+    old = _read_entries(LEGACY_FILE)
+    if not old:
+        return
+    have = _read_entries(ROOTS_FILE)
+    both = _merged(have, old)
+    if len(both) > len(have):
+        try:
+            _write_entries(ROOTS_FILE, both)
+        except Exception as e:
+            print(f"[bEpicViewer] could not copy {LEGACY_FILE} to {ROOTS_FILE}: {e}")
+
+
+def file_entries():
+    """The folders listed in the file (and in the old one in ComfyUI's folder,
+    while it is still there), as written."""
+    return _merged(_read_entries(ROOTS_FILE), _read_entries(LEGACY_FILE))
 
 
 def expand(raw):
@@ -117,15 +182,22 @@ def _configured():
     return [p for p in (expand(e) for e in _env_entries() + file_entries()) if p]
 
 
+def _mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
 def roots():
     """[(label, path, real)] for every allowed folder, ComfyUI's own first."""
-    try:
-        mtime = os.path.getmtime(ROOTS_FILE)
-    except OSError:
-        mtime = None
     comfy = comfy_dirs()
-    key = (os.environ.get(ROOTS_ENV, ""), mtime, tuple(comfy))
+    key = (os.environ.get(ROOTS_ENV, ""), _mtime(ROOTS_FILE), _mtime(LEGACY_FILE), tuple(comfy))
     if _cache["key"] != key:
+        if _cache.get("legacy") != key[2]:
+            _cache["legacy"] = key[2]
+            _adopt_legacy()
+            key = key[:1] + (_mtime(ROOTS_FILE),) + key[2:]
         seen, out = set(), []
         for label, path in comfy + [(p, p) for p in _configured()]:
             real = _real(path)
@@ -230,6 +302,7 @@ def describe():
         return {"entry": e, "path": p, "status": _status(p)}
     return {
         "file": ROOTS_FILE,
+        "legacy_file": LEGACY_FILE if os.path.isfile(LEGACY_FILE) else "",
         "env_var": ROOTS_ENV,
         "comfy": [{"label": label, "path": path, "status": _status(path)}
                   for label, path in comfy_dirs()],
@@ -253,16 +326,19 @@ def write_file_entries(entries):
             seen.add(key)
             clean.append(entry)
 
-    try:
-        with open(ROOTS_FILE, encoding="utf-8") as fh:
-            comments = [line.rstrip("\r\n") for line in fh if line.lstrip().startswith("#")]
-    except FileNotFoundError:
-        comments = _FILE_HEADER.rstrip("\n").split("\n")
-    tmp = ROOTS_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(comments + clean) + "\n")
-    os.replace(tmp, ROOTS_FILE)
+    _write_entries(ROOTS_FILE, clean)
+    # The page shows one list and this is all of it now: a folder left in the
+    # old file would come straight back, removed or not.
+    if _read_entries(LEGACY_FILE):
+        try:
+            _write_entries(LEGACY_FILE, [], comments=[
+                "# The bEpic Image Viewer keeps its folder list per user now:",
+                f"# {ROOTS_FILE}",
+                "# (This file is still read; folders listed here are copied there.)"])
+        except Exception as e:
+            print(f"[bEpicViewer] could not empty {LEGACY_FILE}: {e}")
     _cache["key"] = None
+    _cache["legacy"] = _mtime(LEGACY_FILE)
     return clean
 
 

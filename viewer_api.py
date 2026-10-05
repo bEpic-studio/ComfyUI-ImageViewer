@@ -1087,7 +1087,7 @@ try:
             return web.json_response(out)
 
         async def _bepic_roots_save(request):
-            """Replace the folders listed in bepic_viewer_roots.txt. The one
+            """Replace the folders listed in the roots file (path_access.ROOTS_FILE). The one
             request that can widen what every other route will open, so it is
             fenced by path_access.may_edit."""
             editable, reason = path_access.may_edit(request)

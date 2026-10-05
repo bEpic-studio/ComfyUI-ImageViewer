@@ -14,7 +14,7 @@ It opens on **ComfyUI's input folder**, which the server reports, so it is the r
 
 Out of the box, the browser — and everything else in the viewer that opens a file by its path, such as **Send to Image Viewer** on a loader node — reaches **ComfyUI's input, output and temp folders**, and nothing else. A path outside them is refused with a message saying so.
 
-To open more — a project drive, a plates folder on a share — list the folders, one per line, in a file named `bepic_viewer_roots.txt` next to ComfyUI's `extra_model_paths.yaml`:
+To open more — a project drive, a plates folder on a share — add the folders in **Settings → bEpic Viewer → Folders**, or list them, one per line, in `~/.bepic_viewer/roots.txt` (the user's home folder on the ComfyUI machine; `BEPIC_VIEWER_ROOTS_FILE` names another file):
 
 ```text
 # Folders the bEpic viewer may open, besides ComfyUI's own
@@ -23,6 +23,8 @@ W:\
 ```
 
 Or set the `BEPIC_VIEWER_ROOTS` environment variable, folders separated by `;` on Windows (`:` elsewhere) — the handier form for a launcher such as AYON that sets up ComfyUI's environment. Both are read on every request, so an edit needs no restart.
+
+The file is kept per user rather than in ComfyUI's folder because that folder is usually a git checkout a launcher or updater manages: one that stashes untracked files before switching versions took the list with it, and the folders had to be added again after every start. A `bepic_viewer_roots.txt` in ComfyUI's folder — where the list used to live — is still read, and its folders are copied to the new file.
 
 The limit exists because the viewer's file routes answer anything that can reach ComfyUI's port. It only governs what the *viewer* opens; a workflow's own loader nodes still load whatever path they are given.
 

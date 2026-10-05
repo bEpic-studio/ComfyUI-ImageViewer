@@ -12,7 +12,7 @@
 //     it (history limit, sequence folding, the browser's kind filter) — so the
 //     two can never disagree;
 //   - the folders the viewer may open, which belong to the SERVER
-//     (bepic_viewer_roots.txt, see path_access.py), not to a setting: that entry
+//     (~/.bepic_viewer/roots.txt, see path_access.py), not to a setting: that entry
 //     is a custom editor that talks to /bepic/roots and stores nothing itself.
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
@@ -133,7 +133,7 @@ function defs() {
             name: "Folders the viewer may open",
             tooltip: "The file browser and every viewer route are confined to these folders, " +
                      "each with everything inside it, subfolders included. " +
-                     "Kept on the server in bepic_viewer_roots.txt, not in your settings.",
+                     "Kept on the ComfyUI machine in ~/.bepic_viewer/roots.txt, not in your settings.",
             type: (name, setter, value) => renderFolderEditor(),
             defaultValue: "", sortOrder: 1000,
         },
