@@ -98,6 +98,7 @@ export const PageDockMixin = {
 
         if (!side) {
             this._pageDockRemoveSlot();
+            this._pageDockStack(null);
             if (st.float) for (const k of FLOAT_KEYS) this.style[k] = st.float[k] || "";
             st.float = null;
         }
@@ -174,6 +175,24 @@ export const PageDockMixin = {
                        right: "auto", bottom: "auto" };
         // Only what differs: every write here wakes the style watcher above.
         for (const k of FLOAT_KEYS) if (this.style[k] !== want[k]) this.style[k] = want[k];
+        this._pageDockStack(slot.parentElement);
+    },
+
+    /** Stay above the cell the viewer is docked over. The cell is a positioned
+     *  element with a z-index of its own, and ComfyUI's bottom one (1000) is
+     *  higher than the viewer's (500): it lay on top and took every click, so
+     *  docked to the bottom nothing in the viewer answered. Read off the cell
+     *  rather than known per side, so a frontend that raises another one is
+     *  covered too. */
+    _pageDockStack(cell) {
+        let z = "";
+        if (cell) {
+            const own = parseInt(getComputedStyle(this).zIndex, 10);
+            const base = Number.isFinite(own) && !this.style.zIndex ? own : 500;
+            const cellZ = parseInt(getComputedStyle(cell).zIndex, 10);
+            if (Number.isFinite(cellZ) && cellZ >= base) z = String(cellZ + 1);
+        }
+        if (this.style.zIndex !== z) this.style.zIndex = z;
     },
 
     /** The canvas area changed size: ComfyUI's canvas and the viewer's own
