@@ -476,11 +476,14 @@ def _thumb_from_video_file(video_path, tag):
 
 # ── versions ─────────────────────────────────────────────────────────────────
 # A sequence is named by its frame numbers, not by a counter, so two runs with
-# one prefix write the same names. What keeps them apart is a version: `_v003` in
-# the prefix (in the file name, in a folder, or both — shot_v003/shot_v003), which
-# is moved past the latest one on disk. A prefix without one is given `_v001`.
+# one prefix write the same names and the second would overwrite the first. What
+# keeps them apart is the version in the prefix: `_v003` in the file name, a
+# `v003` folder, or both (shot/v003/shot_v003_beauty). It is used as given when
+# nothing would be overwritten, and counted up only when the files this run is
+# about to write are already there. A prefix without a version is given `_v001`.
 
-_VERSION = re.compile(r"_v(\d+)", re.I)
+_VERSION_IN_NAME = re.compile(r"_v(\d+)", re.I)
+_VERSION_FOLDER = re.compile(r"v(\d+)$", re.I)
 
 
 def _expand_tokens(prefix, w, h):
@@ -498,58 +501,54 @@ def _expand_tokens(prefix, w, h):
     return prefix
 
 
-def _versions_on_disk(folder, part, match, is_file):
-    """Version numbers already taken by siblings of *part* in *folder*: files
-    whose name starts with it (any frame number, any extension), or non-empty
-    folders named like it."""
-    head, tail = re.escape(part[:match.start()]), re.escape(part[match.end():])
-    rx = re.compile(f"^{head}_v(\\d+){tail}" + ("(?:[._].*)?$" if is_file else "$"), re.I)
-    found = []
+def _version_span(part):
+    """Where the version sits in one path part: (start of digits, end of digits),
+    or None. The last `_v###` in it, or the whole part when it is just `v###`."""
+    found = list(_VERSION_IN_NAME.finditer(part))
+    if found:
+        return found[-1].start(1), found[-1].end(1)
+    whole = _VERSION_FOLDER.fullmatch(part)
+    return (whole.start(1), whole.end(1)) if whole else None
+
+
+def _sequence_exists(out_dir, parts):
+    """True when a sequence of this prefix is already on disk: any file named
+    `<last part>.<anything>` in its folder."""
+    head = parts[-1] + "."
     try:
-        entries = list(os.scandir(folder))
+        return any(e.name.startswith(head) for e in os.scandir(os.path.join(out_dir, *parts[:-1])))
     except OSError:
-        return found
-    for entry in entries:
-        m = rx.match(entry.name)
-        if not m:
-            continue
-        try:
-            if is_file:
-                ok = entry.is_file()
-            else:
-                ok = entry.is_dir() and any(os.scandir(entry.path))
-        except OSError:
-            ok = False
-        if ok:
-            found.append(int(m.group(1)))
-    return found
+        return False                       # no such folder yet: nothing to overwrite
 
 
 def versioned_prefix(filename_prefix, out_dir, w=0, h=0):
-    """*filename_prefix* with its version set to one no earlier run has used.
+    """*filename_prefix* with a version this run will not overwrite.
 
-    The version in the prefix is where counting starts: `shot_v003` writes v003
-    when nothing later is on disk, and one past the latest otherwise. Its digit
-    count is kept. Without a version the prefix gets `_v001` and the same rule.
-    Returns (prefix, version)."""
+    The version in the prefix is used as it is. Only when the files about to be
+    written already exist is it raised - by one, and again until the names are
+    free - in every place the prefix carries it, so `shot/v003/shot_v003` moves
+    to `shot/v004/shot_v004` together. Its digit count is kept. A prefix with no
+    version gets `_v001` and the same rule. Returns (prefix, version)."""
     prefix = _expand_tokens((filename_prefix or "bEpic").strip().strip('"') or "bEpic", w, h)
     parts = [p for p in re.split(r"[\\/]+", prefix) if p]
     if not parts:
         parts = ["bEpic"]
-    last = lambda part: (list(_VERSION.finditer(part)) or [None])[-1]  # noqa: E731
-    if not any(last(p) for p in parts):
+    if not any(_version_span(p) for p in parts):
         parts[-1] += "_v001"
-    index = next(i for i, p in enumerate(parts) if last(p))
-    match = last(parts[index])
-    given, digits = int(match.group(1)), len(match.group(1))
-    found = _versions_on_disk(os.path.join(out_dir, *parts[:index]), parts[index], match,
-                              is_file=index == len(parts) - 1)
-    version = max(given, max(found) + 1) if found else given
-    for i, part in enumerate(parts):
-        m = last(part)
-        if m:
-            parts[i] = f"{part[:m.start()]}{m.group(0)[:2]}{version:0{digits}d}{part[m.end():]}"
-    return "/".join(parts), version
+    spans = [_version_span(p) for p in parts]
+    first = next(i for i, s in enumerate(spans) if s)
+    digits = spans[first][1] - spans[first][0]
+    version = int(parts[first][spans[first][0]:spans[first][1]])
+
+    def with_version(n):
+        return [part if span is None else f"{part[:span[0]]}{n:0{digits}d}{part[span[1]:]}"
+                for part, span in zip(parts, spans)]
+
+    candidate = with_version(version)
+    while _sequence_exists(out_dir, candidate) and version < 10 ** 6:
+        version += 1
+        candidate = with_version(version)
+    return "/".join(candidate), version
 
 
 def _prepare_output(filename_prefix, w, h):
@@ -740,8 +739,9 @@ def write_output(tensor, filename_prefix, file_format, fps,
     `sequence` switches still images from ComfyUI's `prefix_00001_.ext` to the
     frame-numbered `prefix.1001.ext` the rest of a VFX pipeline expects:
     numbering starts at `first_frame`, and `padding` sets the digit count.
-    Those names are the same on every run, so each run of a sequence is written
-    under a version of its own (see versioned_prefix): `prefix_v002.1001.ext`.
+    Those names are the same on every run, so a run that would overwrite an
+    earlier one is written under the next version instead (see versioned_prefix):
+    `prefix_v002.1001.ext`.
 
     `options` are the per-format settings — bit_depth, compression, quality,
     compress_level; one that the format has no use for is ignored."""
