@@ -521,7 +521,9 @@ class bEpicSendToViewer:
             try:
                 saved, tab_frames = file_writer.write_video_input(
                     input, save_to_output, filename_prefix, file_format, fps,
-                    prompt, extra_pnginfo, options=options)
+                    prompt, extra_pnginfo, options=options,
+                    sequence=is_sequence, first_frame=first_frame_number,
+                    padding=padding)
             except Exception as e:
                 print(f"\033[91m[bEpicSendToViewer] video input failed: {e}\033[0m")
                 tab_frames = None

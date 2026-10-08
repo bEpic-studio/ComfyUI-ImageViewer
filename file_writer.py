@@ -645,7 +645,8 @@ def is_video_input(obj):
 
 
 def write_video_input(video_obj, save_to_output, filename_prefix, file_format, fps,
-                      prompt=None, extra_pnginfo=None, options=None):
+                      prompt=None, extra_pnginfo=None, options=None,
+                      sequence=False, first_frame=1001, padding=4):
     """Handle a ComfyUI VIDEO input: always produce a viewer-playable file, and
     persist it to ./output when the toggle is on. Returns (saved_paths,
     viewer_frames). mp4 targets use the video's own encoder (keeps audio); other
@@ -712,7 +713,10 @@ def write_video_input(video_obj, save_to_output, filename_prefix, file_format, f
     # Non-mp4 output format: extract frames and route through the image/video
     # writer (audio is dropped for these formats).
     images = video_obj.get_components().images
+    # The sequence settings apply here as they do to plain frames: a clip saved
+    # in a still format is an image sequence either way.
     return write_output(images, filename_prefix, ext, rate, prompt, extra_pnginfo,
+                        sequence=sequence, first_frame=first_frame, padding=padding,
                         options=options)
 
 
